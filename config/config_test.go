@@ -40,3 +40,17 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 }
+
+// TinySQL has no authentication, so it must not listen on other interfaces
+// unless the user asks for it.
+func (s *testConfigSuite) TestDefaultListenLocalhostOnly(c *C) {
+	conf := NewConfig()
+	c.Assert(conf.Host, Equals, "127.0.0.1")
+	c.Assert(conf.Status.StatusHost, Equals, "127.0.0.1")
+
+	example := new(Config)
+	_, localFile, _, _ := runtime.Caller(0)
+	c.Assert(example.Load(filepath.Join(filepath.Dir(localFile), "config.toml.example")), IsNil)
+	c.Assert(example.Host, Equals, "127.0.0.1")
+	c.Assert(example.Status.StatusHost, Equals, "127.0.0.1")
+}

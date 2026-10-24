@@ -1,25 +1,9 @@
 # Quick Start
 
-#### Run TiDB with Docker (Standalone mode)
-
-You can quickly test TiDB with Docker, the source repository contains the Dockerfile which contains local tidb-server.
-
-To install Docker on your system, you can read the document on https://docs.docker.com/
-
-```
-docker pull pingcap/tidb:latest
-docker run --name tidb-server -d -p 4000:4000 pingcap/tidb:latest
-```
-
-`docker pull` may take a while to download images ~560M.
-
-Then you can use official mysql client to connect to TiDB.
-
-```
-mysql -h 127.0.0.1 -P 4000 -u root -D test --prompt="tidb> "  
-```
-
-Notice: OS X user may use `docker-machine ip` to connect it.
+TinySQL is built and run from source; there is no Docker image. See
+[Run as MySQL protocol server](#run-as-mysql-protocol-server) below. The server
+listens on `127.0.0.1` only by default (see the security notice in the
+[README](../README.md#security-notice)).
 
 #### __Or run TiDB on TiKV cluster__ 
 
