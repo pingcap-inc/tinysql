@@ -85,7 +85,9 @@ type Status struct {
 }
 
 var defaultConf = Config{
-	Host:             "0.0.0.0",
+	// Localhost only: TinySQL has no authentication. Set host / status-host to
+	// "0.0.0.0" to accept connections from other machines.
+	Host:             "127.0.0.1",
 	AdvertiseAddress: "",
 	Port:             4000,
 	Cors:             "",
@@ -98,7 +100,7 @@ var defaultConf = Config{
 	},
 	Status: Status{
 		ReportStatus: true,
-		StatusHost:   "0.0.0.0",
+		StatusHost:   "127.0.0.1",
 		StatusPort:   10080,
 	},
 }

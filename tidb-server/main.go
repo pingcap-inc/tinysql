@@ -64,7 +64,7 @@ var (
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
-	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
+	host             = flag.String(nmHost, "127.0.0.1", "tidb server host (use 0.0.0.0 to listen on all interfaces)")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
@@ -76,7 +76,7 @@ var (
 
 	// Status
 	reportStatus = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
-	statusHost   = flag.String(nmStatusHost, "0.0.0.0", "tidb server status host")
+	statusHost   = flag.String(nmStatusHost, "127.0.0.1", "tidb server status host (use 0.0.0.0 to listen on all interfaces)")
 	statusPort   = flag.String(nmStatusPort, "10080", "tidb server status port")
 )
 

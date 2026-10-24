@@ -37,6 +37,14 @@ The course is organized into three parts:
 
 This course only focuses on the SQL layer of a distributed database system. If you are also interested in KV layer, see [TinyKV](https://github.com/pingcap-incubator/tinykv).
 
+## Security notice
+
+TinySQL is for learning. It has no authentication, no privilege system and no TLS by design, so anyone who can reach its ports can read and change all data.
+
+- By default the SQL port (4000) and the status/debug port (10080) listen on `127.0.0.1` only.
+- If you need to connect from another machine, or run TinySQL inside a Docker container, start it with `-host 0.0.0.0` (and `-status-host 0.0.0.0` for the status port), and only on a network you trust.
+- Do not expose TinySQL to the internet or use it with real data.
+
 ## Deploy
 
 Once you finish the project. You can deploy the binary and use MySQL client to connect the server.
