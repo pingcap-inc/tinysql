@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"net/http"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
@@ -97,6 +98,14 @@ func (ts *TidbTestSuite) TestAuthentication(c *C) {
 	c.Assert(err, IsNil)
 	defer db.Close()
 	c.Assert(db.Ping(), IsNil)
+}
+
+func (ts *TidbTestSuite) TestStatusServerHasNoPProfByDefault(c *C) {
+	c.Parallel()
+	resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/cmdline")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
 }
 
 func (ts *TidbTestSuite) TestNewServerRequiresRootPassword(c *C) {

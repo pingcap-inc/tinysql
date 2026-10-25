@@ -14,8 +14,9 @@ port = 4000
 # Registered store name, [tikv, mocktikv]
 store = "mocktikv"
 
-# TiDB storage path.
-path = "/tmp/tinysql"
+# TiDB storage path. For mocktikv this is a directory, created with mode 0700;
+# a relative path is resolved from the directory the server starts in.
+path = "tinysql-data"
 
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
@@ -33,16 +34,18 @@ filename = ""
 max-size = 300
 
 [status]
-# If enable status report HTTP service.
-report-status = true
+# Start the status HTTP server. It has no authentication, so it is off by default.
+report-status = false
 
 # TiDB status host.
 status-host = "127.0.0.1"
 
-## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
-## API for pprof:      http://${status-host}:${status_port}/debug/pprof
-# TiDB status port.
+# TiDB status port. Must not be 0 when report-status is true.
 status-port = 10080
+
+# Serve Go pprof at http://${status-host}:${status-port}/debug/pprof. pprof
+# exposes heap dumps and process arguments; enable it only for local debugging.
+enable-pprof = false
 
 [security]
 # TLS for MySQL clients: set ssl-cert and ssl-key (PEM files) to enable it.

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
@@ -83,6 +84,10 @@ type Status struct {
 	StatusPort uint `toml:"status-port" json:"status-port"`
 
 	ReportStatus bool `toml:"report-status" json:"report-status"`
+
+	// EnablePProf registers the Go pprof handlers on the status server. They
+	// expose heap dumps and process arguments, so they are off by default.
+	EnablePProf bool `toml:"enable-pprof" json:"enable-pprof"`
 }
 
 // Security is the security section of the config.
@@ -107,16 +112,17 @@ var defaultConf = Config{
 	Port:             4000,
 	Cors:             "",
 	Store:            "mocktikv",
-	Path:             "/tmp/tinysql",
+	Path:             "tinysql-data",
 	Lease:            "45s",
 	Log: Log{
 		Level: "info",
 		File:  logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 	},
 	Status: Status{
-		ReportStatus: true,
+		ReportStatus: false,
 		StatusHost:   "127.0.0.1",
 		StatusPort:   10080,
+		EnablePProf:  false,
 	},
 }
 
@@ -157,6 +163,22 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	return err
+}
+
+// Valid checks the settings that would otherwise fail open: an empty host
+// listens on every interface, and a wildcard CORS origin makes the status
+// server's responses readable by any web page.
+func (c *Config) Valid() error {
+	if c.Host == "" || c.Port == 0 {
+		return errors.New("host and port must be set")
+	}
+	if c.Status.ReportStatus && (c.Status.StatusHost == "" || c.Status.StatusPort == 0) {
+		return errors.New("status-host and status-port must be set when report-status is true (set report-status = false to disable the status server)")
+	}
+	if strings.TrimSpace(c.Cors) == "*" {
+		return errors.New(`cors = "*" is not allowed; set a single origin such as "http://127.0.0.1:3000"`)
+	}
+	return nil
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

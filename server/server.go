@@ -40,9 +40,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	// For pprof
-	_ "net/http/pprof"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -127,6 +124,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		stopListenerCh: make(chan struct{}, 1),
 	}
 
+	if err := cfg.Valid(); err != nil {
+		return nil, err
+	}
 	if len(cfg.Security.RootPasswordHash) == 0 {
 		return nil, errors.New("the root password is not set")
 	}
@@ -196,7 +196,9 @@ func (s *Server) Run() error {
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		s.startStatusHTTP()
+		if err := s.startStatusHTTP(); err != nil {
+			return err
+		}
 	}
 	for {
 		conn, err := s.listener.Accept()

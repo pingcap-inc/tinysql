@@ -15,40 +15,74 @@ package server
 
 import (
 	"bytes"
-	"fmt"
-	"go.uber.org/zap"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/soheilhy/cmux"
+	"go.uber.org/zap"
 )
 
-const defaultStatusPort = 10080
+// Status server timeouts.
+const (
+	statusReadHeaderTimeout = 10 * time.Second
+	statusReadTimeout       = 30 * time.Second
+	statusWriteTimeout      = 60 * time.Second
+	statusIdleTimeout       = 2 * time.Minute
 
-func (s *Server) startStatusHTTP() {
-	go s.startHTTPServer()
+	// maxPProfSeconds caps the duration a caller may request from any pprof
+	// handler.
+	maxPProfSeconds = 30
+)
+
+// limitPProfSeconds rejects a pprof "seconds" parameter that is not a
+// positive number of at most maxPProfSeconds.
+func limitPProfSeconds(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s := r.FormValue("seconds"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil || sec <= 0 || sec > maxPProfSeconds {
+				http.Error(w, "seconds must be a positive number no greater than "+strconv.Itoa(maxPProfSeconds), http.StatusBadRequest)
+				return
+			}
+		}
+		h(w, r)
+	}
 }
 
-func (s *Server) startHTTPServer() {
-	router := mux.NewRouter()
-
-	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
-		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+// startStatusHTTP binds the status listener and serves it in the background.
+// A bind error is returned to the caller instead of being logged and ignored.
+func (s *Server) startStatusHTTP() error {
+	addr := net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return errors.Annotatef(err, "status server cannot listen on %s", addr)
 	}
+	logutil.BgLogger().Info("status server is running", zap.String("addr", addr), zap.Bool("pprof", s.cfg.Status.EnablePProf))
+	go s.startHTTPServer(l)
+	return nil
+}
+
+func (s *Server) startHTTPServer(l net.Listener) {
+	router := mux.NewRouter()
 
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 
-	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
-	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	if s.cfg.Status.EnablePProf {
+		// Index also serves the named profiles (heap, goroutine, ...), which accept seconds too.
+		serverMux.HandleFunc("/debug/pprof/", limitPProfSeconds(pprof.Index))
+		serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		serverMux.HandleFunc("/debug/pprof/profile", limitPProfSeconds(pprof.Profile))
+		serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		serverMux.HandleFunc("/debug/pprof/trace", limitPProfSeconds(pprof.Trace))
+	}
 
 	var (
 		httpRouterPage bytes.Buffer
@@ -71,7 +105,9 @@ func (s *Server) startHTTPServer() {
 	if err != nil {
 		logutil.BgLogger().Error("generate root failed", zap.Error(err))
 	}
-	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
+	if s.cfg.Status.EnablePProf {
+		httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
+	}
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
@@ -80,27 +116,31 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	s.setupStatusServer(addr, serverMux)
+	s.setupStatusServer(l, serverMux)
 }
 
-func (s *Server) setupStatusServer(addr string, serverMux *http.ServeMux) {
-	l, err := net.Listen("tcp", addr)
-	if err != nil {
-		logutil.BgLogger().Info("listen failed", zap.Error(err))
-		return
-	}
+func (s *Server) setupStatusServer(l net.Listener, serverMux *http.ServeMux) {
 	m := cmux.New(l)
+	m.SetReadTimeout(statusReadHeaderTimeout)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
 	httpL := m.Match(cmux.HTTP1Fast())
 
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.statusServer = &http.Server{
+		Addr:              l.Addr().String(),
+		Handler:           CorsHandler{handler: serverMux, cfg: s.cfg},
+		ReadHeaderTimeout: statusReadHeaderTimeout,
+		ReadTimeout:       statusReadTimeout,
+		WriteTimeout:      statusWriteTimeout,
+		IdleTimeout:       statusIdleTimeout,
+		MaxHeaderBytes:    1 << 16,
+	}
 
 	go util.WithRecovery(func() {
 		err := s.statusServer.Serve(httpL)
 		logutil.BgLogger().Error("http server error", zap.Error(err))
 	}, nil)
-	err = m.Serve()
+	err := m.Serve()
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}

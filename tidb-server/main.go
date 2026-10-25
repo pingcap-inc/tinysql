@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,7 @@ import (
 // Flag Names
 const (
 	nmConfig           = "config"
+	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -54,6 +56,7 @@ const (
 	nmReportStatus     = "report-status"
 	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
+	nmEnablePProf      = "enable-pprof"
 
 	nmDdlLease = "lease"
 
@@ -62,11 +65,12 @@ const (
 )
 
 var (
-	configPath = flag.String(nmConfig, "", "config file path")
+	configPath   = flag.String(nmConfig, "", "config file path")
+	configStrict = flagBoolean(nmConfigStrict, true, "refuse to start if the config file contains unknown options")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
-	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	storePath        = flag.String(nmStorePath, "tinysql-data", "tidb storage path (for mocktikv, a directory created with mode 0700)")
 	host             = flag.String(nmHost, "127.0.0.1", "tidb server host (use 0.0.0.0 to listen on all interfaces)")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
@@ -78,9 +82,10 @@ var (
 	logFile  = flag.String(nmLogFile, "", "log file path")
 
 	// Status
-	reportStatus = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
+	reportStatus = flagBoolean(nmReportStatus, false, "If enable status report HTTP service.")
 	statusHost   = flag.String(nmStatusHost, "127.0.0.1", "tidb server status host (use 0.0.0.0 to listen on all interfaces)")
 	statusPort   = flag.String(nmStatusPort, "10080", "tidb server status port")
+	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes heap dumps; local debugging only)")
 )
 
 var (
@@ -99,9 +104,8 @@ func main() {
 	overrideConfig()
 	setGlobalVars()
 	setupLog()
-	// If configStrict had been specified, and there had been an error, the server would already
-	// have exited by now. If configWarning is not an empty string, write it to the log now that
-	// it's been properly set up.
+	// With -config-strict (the default) an unknown config option has already stopped the server.
+	// With -config-strict=false, write the warning to the log now that it's been set up.
 	if configWarning != "" {
 		log.Warn(configWarning)
 	}
@@ -167,8 +171,8 @@ func loadConfig() string {
 			return ""
 		}
 
-		// Unused config item erro turns to warnings.
-		if _, ok := err.(*config.ErrConfigValidationFailed); ok {
+		// Unknown config items are fatal unless -config-strict=false.
+		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configStrict {
 			return err.Error()
 		}
 
@@ -201,7 +205,6 @@ func overrideConfig() {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
@@ -235,6 +238,21 @@ func overrideConfig() {
 		terror.MustNil(err)
 		cfg.Status.StatusPort = uint(p)
 	}
+	if actualFlags[nmEnablePProf] {
+		cfg.Status.EnablePProf = *enablePProf
+	}
+
+	err = cfg.Valid()
+	terror.MustNil(err)
+
+	// A relative mocktikv path must be made absolute: "mocktikv://./x" parses
+	// to "/x", and "mocktikv://x" to an empty, in-memory store.
+	if cfg.Store == "mocktikv" && cfg.Path != "" {
+		cfg.Path, err = filepath.Abs(cfg.Path)
+		terror.MustNil(err)
+		err = os.MkdirAll(cfg.Path, 0700)
+		terror.MustNil(err)
+	}
 }
 
 func setGlobalVars() {
@@ -246,6 +264,15 @@ func setGlobalVars() {
 }
 
 func setupLog() {
+	// lumberjack keeps the mode of an existing log file, so create it private.
+	if name := cfg.Log.File.Filename; name != "" {
+		// lumberjack used to create a missing log directory itself; keep that working.
+		terror.MustNil(os.MkdirAll(filepath.Dir(name), 0700))
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		terror.MustNil(err)
+		terror.MustNil(f.Close())
+	}
+
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 

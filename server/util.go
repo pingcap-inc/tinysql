@@ -302,8 +302,10 @@ type CorsHandler struct {
 
 func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if h.cfg.Cors != "" {
+		// cfg.Cors is a single configured origin; Config.Valid rejects "*".
 		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
 		w.Header().Set("Access-Control-Allow-Methods", "GET")
+		w.Header().Add("Vary", "Origin")
 	}
 	h.handler.ServeHTTP(w, req)
 }
