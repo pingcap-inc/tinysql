@@ -43,15 +43,16 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Lease            string `toml:"lease" json:"lease"`
-	Log              Log    `toml:"log" json:"log"`
-	Status           Status `toml:"status" json:"status"`
+	Host             string   `toml:"host" json:"host"`
+	AdvertiseAddress string   `toml:"advertise-address" json:"advertise-address"`
+	Port             uint     `toml:"port" json:"port"`
+	Cors             string   `toml:"cors" json:"cors"`
+	Store            string   `toml:"store" json:"store"`
+	Path             string   `toml:"path" json:"path"`
+	Lease            string   `toml:"lease" json:"lease"`
+	Log              Log      `toml:"log" json:"log"`
+	Status           Status   `toml:"status" json:"status"`
+	Security         Security `toml:"security" json:"security"`
 }
 
 // Log is the log section of config.
@@ -84,9 +85,17 @@ type Status struct {
 	ReportStatus bool `toml:"report-status" json:"report-status"`
 }
 
+// Security is the security section of the config.
+type Security struct {
+	// RootPasswordHash is SHA1(SHA1(password)) of the root account, as used by
+	// mysql_native_password. It is set at startup (see tidb-server) and is never
+	// read from, or written to, a config file.
+	RootPasswordHash []byte `toml:"-" json:"-"`
+}
+
 var defaultConf = Config{
-	// Localhost only: TinySQL has no authentication. Set host / status-host to
-	// "0.0.0.0" to accept connections from other machines.
+	// Localhost only. Set host / status-host to "0.0.0.0" to accept connections
+	// from other machines.
 	Host:             "127.0.0.1",
 	AdvertiseAddress: "",
 	Port:             4000,

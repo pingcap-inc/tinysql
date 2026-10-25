@@ -36,7 +36,10 @@ The default server port is `4000` and can be changed by flag `-P <port>`.
 Run `./tidb-server -h` to see more flag options.
 
 After you started tidb-server, you can use official `mysql` client to connect to TiDB.
+Log in as `root` with the root password: the value of `TINYSQL_ROOT_PASSWORD` if
+you set it, otherwise the password the server generated in the `root-password`
+file of its data directory (default `/tmp/tinysql/root-password`).
 
 ```
-mysql -h 127.0.0.1 -P 4000 -u root -D test --prompt="tidb> " 
+mysql -h 127.0.0.1 -P 4000 -u root -p -D test --prompt="tidb> "
 ```

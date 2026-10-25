@@ -32,7 +32,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"sync"
@@ -126,12 +125,15 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		stopListenerCh: make(chan struct{}, 1),
 	}
 
+	if len(cfg.Security.RootPasswordHash) == 0 {
+		return nil, errors.New("the root password is not set")
+	}
+	var err error
+
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
-
-	var err error
 
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -145,9 +147,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	// Init rand seed for randomBuf()
-	rand.Seed(time.Now().UTC().UnixNano())
 	return s, nil
 }
 

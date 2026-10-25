@@ -1,8 +1,8 @@
 # TiDB Configuration.
 
 # TiDB server host.
-# Defaults to localhost only (TinySQL has no authentication); set "0.0.0.0" to
-# accept connections from other machines.
+# Defaults to localhost only; set "0.0.0.0" to accept connections from other
+# machines.
 host = "127.0.0.1"
 
 # tidb server advertise IP.

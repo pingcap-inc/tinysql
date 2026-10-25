@@ -36,8 +36,12 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+// testRootPassword is the root password the test server is started with.
+const testRootPassword = "tinysql-test"
+
 var defaultDSNConfig = mysql.Config{
 	User:   "root",
+	Passwd: testRootPassword,
 	Net:    "tcp",
 	Addr:   "127.0.0.1:4001",
 	DBName: "test",

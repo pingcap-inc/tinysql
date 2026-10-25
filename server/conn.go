@@ -244,6 +244,7 @@ type handshakeResponse41 struct {
 	User       string
 	DBName     string
 	Auth       []byte
+	AuthPlugin string
 	Attrs      map[string]string
 }
 
@@ -370,9 +371,11 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
-		// TODO: Support mysql.ClientPluginAuth, skip it now
-		idx := bytes.IndexByte(data[offset:], 0)
-		offset = offset + idx + 1
+		// Some clients set the flag but send no plugin name; leave offset alone then.
+		if idx := bytes.IndexByte(data[offset:], 0); idx >= 0 {
+			packet.AuthPlugin = string(data[offset : offset+idx])
+			offset = offset + idx + 1
+		}
 	}
 
 	if packet.Capability&mysql.ClientConnectAtts > 0 {
@@ -480,8 +483,34 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	err = cc.openSessionAndDoAuth()
+	if resp.Capability&mysql.ClientPluginAuth > 0 && resp.AuthPlugin != "" && resp.AuthPlugin != nativePasswordPlugin {
+		// The client answered with another plugin (for example MySQL 8's
+		// caching_sha2_password); ask it to answer with mysql_native_password.
+		if resp.Auth, err = cc.authSwitchRequest(); err != nil {
+			return err
+		}
+	}
+
+	err = cc.openSessionAndDoAuth(resp.Auth)
 	return err
+}
+
+// authSwitchRequest asks the client to authenticate with mysql_native_password
+// using the original salt, and returns its new auth response.
+func (cc *clientConn) authSwitchRequest() ([]byte, error) {
+	data := make([]byte, 4, 4+1+len(nativePasswordPlugin)+1+len(cc.salt)+1)
+	data = append(data, 0xfe)
+	data = append(data, nativePasswordPlugin...)
+	data = append(data, 0)
+	data = append(data, cc.salt...)
+	data = append(data, 0)
+	if err := cc.writePacket(data); err != nil {
+		return nil, err
+	}
+	if err := cc.flush(); err != nil {
+		return nil, err
+	}
+	return cc.readPacket()
 }
 
 func (cc *clientConn) SessionStatusToString() string {
@@ -498,7 +527,22 @@ func (cc *clientConn) SessionStatusToString() string {
 	)
 }
 
-func (cc *clientConn) openSessionAndDoAuth() error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
+	// Authenticate before anything else runs for this connection.
+	if cc.user != rootUser || !checkNativePassword(cc.salt, authData, cc.server.cfg.Security.RootPasswordHash) {
+		hasPassword := "YES"
+		if len(authData) == 0 {
+			hasPassword = "NO"
+		}
+		host, err := cc.PeerHost(hasPassword)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Warn("authentication failed",
+			zap.Uint32("conn", cc.connectionID), zap.String("user", cc.user), zap.String("host", host))
+		return errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword)
+	}
+
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
 		tlsState := cc.tlsConn.ConnectionState()
