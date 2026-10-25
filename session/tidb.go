@@ -187,12 +187,16 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	return checkStmtLimit(ctx, sctx, se)
 }
 
+// maxStmtsPerTxn limits the statements in one explicit transaction.
+const maxStmtsPerTxn = 5000
+
 func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	history := GetHistory(sctx)
-	if history.Count() > 5000 {
+	history.executed++
+	if history.Count() > maxStmtsPerTxn {
 		se.RollbackTxn(ctx)
 		return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 			history.Count(), sctx.GetSessionVars().IsAutocommit())

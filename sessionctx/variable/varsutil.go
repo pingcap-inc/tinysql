@@ -240,6 +240,10 @@ const (
 	initChunkSizeUpperBound = 32
 	// maxChunkSizeLowerBound indicates lower bound value of tidb_max_chunk_size.
 	maxChunkSizeLowerBound = 32
+	// maxChunkSizeUpperBound indicates upper bound value of tidb_max_chunk_size.
+	maxChunkSizeUpperBound = 1 << 20
+	// maxConcurrency is the upper bound of the operator concurrency variables.
+	maxConcurrency = 256
 )
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
@@ -407,12 +411,26 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBDDLErrorCountLimit:
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
-		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBBuildStatsConcurrency:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		// Each unit is a goroutine with its own channels and chunks.
+		if v > maxConcurrency {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
+			return strconv.Itoa(maxConcurrency), nil
+		}
+		return value, nil
+	case TiDBIndexLookupSize,
 		TiDBBackoffLockFast, TiDBBackOffWeight:
 		v, err := strconv.Atoi(value)
 		if err != nil {
@@ -458,11 +476,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, nil
 	case TiDBProjectionConcurrency:
-		_, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
-		}
-		return value, nil
+		// A value of 0 or less means a serial projection.
+		return checkInt64SystemVar(name, value, -1, maxConcurrency, vars)
 	case TxnIsolation, TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
@@ -507,6 +522,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		if v < maxChunkSizeLowerBound {
 			return value, errors.Errorf("tidb_max_chunk_size(%d) cannot be smaller than %d", v, maxChunkSizeLowerBound)
+		}
+		// Chunks are allocated at this capacity up front.
+		if v > maxChunkSizeUpperBound {
+			return value, errors.Errorf("tidb_max_chunk_size(%d) cannot be bigger than %d", v, maxChunkSizeUpperBound)
 		}
 		return value, nil
 	case TiDBOptJoinReorderThreshold:

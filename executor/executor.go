@@ -567,6 +567,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
+		// TinySQL has no memory tracking, so the quota is recorded but cannot be
+		// enforced; say so instead of implying a limit.
+		warns = append(warns, errors.New("MEMORY_QUOTA is not enforced: TinySQL does not track query memory"))
 		if memoryQuotaHintCnt > 1 {
 			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
 			warns = append(warns, warn)

@@ -89,6 +89,9 @@ type stmtRecord struct {
 // StmtHistory holds all histories of statements in a txn.
 type StmtHistory struct {
 	history []*stmtRecord
+	// executed counts the statements run in the transaction without keeping
+	// them, for the statement limit.
+	executed int
 }
 
 // Add appends a stmt to history list.
@@ -100,9 +103,9 @@ func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContex
 	h.history = append(h.history, s)
 }
 
-// Count returns the count of the history.
+// Count returns the number of statements recorded or counted in the transaction.
 func (h *StmtHistory) Count() int {
-	return len(h.history)
+	return len(h.history) + h.executed
 }
 
 type session struct {
@@ -532,6 +535,14 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+	if name == variable.TxnIsolation || name == variable.TransactionIsolation {
+		// SERIALIZABLE and READ-UNCOMMITTED pass only in a session with
+		// tidb_skip_isolation_level_check on; as a global default they would
+		// make every new session fail.
+		if upper := strings.ToUpper(sVal); upper == "SERIALIZABLE" || upper == "READ-UNCOMMITTED" {
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
+		}
+	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES (%s, %s);`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, sqlescape.String(name), sqlescape.String(sVal))
 	_, _, err = s.ExecRestrictedSQL(sql)
@@ -1035,7 +1046,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
-				return err
+				// A stored value this session rejects (for example one saved
+				// before a bound was added) must not stop every new session.
+				logutil.BgLogger().Warn("skip a global variable this session cannot use",
+					zap.String("name", varName), zap.Error(err))
 			}
 		}
 	}

@@ -145,9 +145,41 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 		return nil, warns, errors.Trace(errs[0])
 	}
 	for _, stmt := range parser.result {
+		// Check the depth first: SetFlag, the planner and the executor builder
+		// all walk the tree recursively.
+		var depth depthChecker
+		stmt.Accept(&depth)
+		if depth.tooDeep {
+			return nil, warns, ErrParse.GenWithStackByArgs("statement nesting is too deep:", "more than "+strconv.Itoa(MaxNestingDepth)+" levels")
+		}
 		ast.SetFlag(stmt)
 	}
 	return parser.result, warns, nil
+}
+
+// MaxNestingDepth bounds how deeply the nodes of one statement may nest, for
+// example "select !!!...!1" or a chain of thousands of ORs.
+const MaxNestingDepth = 5000
+
+// depthChecker finds a statement nested deeper than MaxNestingDepth. It stops
+// descending at the limit, so checking is itself bounded.
+type depthChecker struct {
+	depth   int
+	tooDeep bool
+}
+
+func (d *depthChecker) Enter(n ast.Node) (ast.Node, bool) {
+	d.depth++
+	if d.depth > MaxNestingDepth {
+		d.tooDeep = true
+		return n, true
+	}
+	return n, d.tooDeep
+}
+
+func (d *depthChecker) Leave(n ast.Node) (ast.Node, bool) {
+	d.depth--
+	return n, true
 }
 
 func (parser *Parser) lastErrorAsWarn() {

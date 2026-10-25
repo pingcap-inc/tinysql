@@ -247,6 +247,19 @@ func (s *testSessionSuite) TestSystemSchemaIsReadOnlyForClients(c *C) {
 	tk.MustExec("set global sql_mode = ''")
 }
 
+// A global isolation level that new sessions cannot use is refused, instead
+// of being stored and breaking every new session.
+func (s *testSessionSuite) TestGlobalIsolationLevelMustBeUsable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_skip_isolation_level_check = 1")
+	_, err := tk.Exec("set global tx_isolation = 'SERIALIZABLE'")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set global transaction_isolation = 'READ-UNCOMMITTED'")
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tx_isolation = 'REPEATABLE-READ'")
+	testkit.NewTestKitWithInit(c, s.store).MustQuery("select 1").Check(testkit.Rows("1"))
+}
+
 // tidb_general_log shows the server's [log] general-log setting; a client must
 // not be able to switch server-wide logging.
 func (s *testSessionSuite) TestGeneralLogIsReadOnly(c *C) {
