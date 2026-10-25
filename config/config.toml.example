@@ -43,3 +43,12 @@ status-host = "127.0.0.1"
 ## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
+
+[security]
+# TLS for MySQL clients: set ssl-cert and ssl-key (PEM files) to enable it.
+# ssl-ca optionally verifies client certificates.
+ssl-ca = ""
+ssl-cert = ""
+ssl-key = ""
+# The root password is not set here. It is read from the TINYSQL_ROOT_PASSWORD
+# environment variable, or generated into <path>/root-password on first start.

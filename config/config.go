@@ -87,6 +87,12 @@ type Status struct {
 
 // Security is the security section of the config.
 type Security struct {
+	// SSLCA, SSLCert and SSLKey enable TLS for MySQL clients. Leave SSLCert and
+	// SSLKey empty to disable TLS. SSLCA optionally verifies client certificates.
+	SSLCA   string `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert string `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey  string `toml:"ssl-key" json:"ssl-key"`
+
 	// RootPasswordHash is SHA1(SHA1(password)) of the root account, as used by
 	// mysql_native_password. It is set at startup (see tidb-server) and is never
 	// read from, or written to, a config file.

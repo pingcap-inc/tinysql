@@ -42,6 +42,7 @@ This course only focuses on the SQL layer of a distributed database system. If y
 TinySQL is for learning. It has a single `root` account with full privileges and no privilege system, so anyone who has the root password can read and change all data.
 
 - **Root password.** Set it with the `TINYSQL_ROOT_PASSWORD` environment variable. If you don't, the server generates one on first start and saves it in `root-password` inside the data directory (`-path`, default `/tmp/tinysql`), readable only by you. The server log shows the file's path, never the password. `TINYSQL_ROOT_PASSWORD` is required with `--store=tikv`.
+- **TLS** is off unless you set `ssl-cert` and `ssl-key` in the `[security]` section of the config file (see `config/config.toml.example`).
 - By default the SQL port (4000) and the status/debug port (10080) listen on `127.0.0.1` only.
 - If you need to connect from another machine, or run TinySQL inside a Docker container, start it with `-host 0.0.0.0` (and `-status-host 0.0.0.0` for the status port), and only on a network you trust.
 - Do not expose TinySQL to the internet or use it with real data.

@@ -31,9 +31,11 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -129,6 +131,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, errors.New("the root password is not set")
 	}
 	var err error
+	if s.tlsConfig, err = loadTLSConfig(&cfg.Security); err != nil {
+		return nil, err
+	}
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
@@ -148,6 +153,42 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, errors.Trace(err)
 	}
 	return s, nil
+}
+
+// loadTLSConfig returns the TLS config for MySQL clients, or nil when TLS is not
+// configured.
+func loadTLSConfig(sec *config.Security) (*tls.Config, error) {
+	if sec.SSLCert == "" && sec.SSLKey == "" {
+		if sec.SSLCA != "" {
+			return nil, errors.New("ssl-ca is set but ssl-cert and ssl-key are not")
+		}
+		return nil, nil
+	}
+	if sec.SSLCert == "" || sec.SSLKey == "" {
+		return nil, errors.New("ssl-cert and ssl-key must be set together")
+	}
+	cert, err := tls.LoadX509KeyPair(sec.SSLCert, sec.SSLKey)
+	if err != nil {
+		return nil, errors.Annotate(err, "load ssl-cert/ssl-key")
+	}
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+	if sec.SSLCA != "" {
+		caPEM, err := os.ReadFile(sec.SSLCA)
+		if err != nil {
+			return nil, errors.Annotate(err, "read ssl-ca")
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, errors.Errorf("no certificates found in ssl-ca %s", sec.SSLCA)
+		}
+		tlsConfig.ClientCAs = pool
+		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+	}
+	logutil.BgLogger().Info("TLS is enabled for MySQL clients")
+	return tlsConfig, nil
 }
 
 // Run runs the server.
