@@ -100,9 +100,10 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 	return protoSketch
 }
 
-// CMSketchFromProto converts CMSketch from its protobuf representation.
+// CMSketchFromProto converts CMSketch from its protobuf representation. It
+// returns nil for a malformed sketch (see validCMSketchProto).
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
-	if protoSketch == nil {
+	if protoSketch == nil || validCMSketchProto(protoSketch) != nil {
 		return nil
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
@@ -141,7 +142,28 @@ func DecodeCMSketch(data []byte) (*CMSketch, error) {
 	if len(p.Rows) == 0 {
 		return nil, nil
 	}
+	if err := validCMSketchProto(p); err != nil {
+		return nil, err
+	}
 	return CMSketchFromProto(p), nil
+}
+
+// validCMSketchProto checks that every row of the sketch has the same,
+// non-zero number of counters, since the matrix is sized from the first row.
+func validCMSketchProto(p *tipb.CMSketch) error {
+	if len(p.Rows) == 0 {
+		return errors.New("CM sketch has no rows")
+	}
+	width := len(p.Rows[0].Counters)
+	if width == 0 {
+		return errors.New("CM sketch rows are empty")
+	}
+	for _, row := range p.Rows {
+		if len(row.Counters) != width {
+			return errors.New("CM sketch rows have different lengths")
+		}
+	}
+	return nil
 }
 
 // TotalCount returns the total count in the sketch, it is only used for test.

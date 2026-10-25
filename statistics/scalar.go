@@ -88,7 +88,11 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	case types.KindUint64:
 		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
 	case types.KindBytes, types.KindString:
-		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
+		// scalars is only built when the bounds are strings; for any other
+		// bound type fall through to the default fraction.
+		if index < len(hg.scalars) {
+			return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
+		}
 	}
 	return 0.5
 }

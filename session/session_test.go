@@ -222,6 +222,31 @@ func (s *testSessionSuite) TestRestrictedSQLRejectsMultipleStatements(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// Client sessions may read the mysql system schema but not write it.
+func (s *testSessionSuite) TestSystemSchemaIsReadOnlyForClients(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	for _, sql := range []string{
+		"insert into mysql.tidb values ('x', 'y', 'z')",
+		"replace into mysql.global_variables values ('sql_mode', '')",
+		"delete from mysql.stats_meta",
+		"drop table mysql.global_variables",
+		"alter table mysql.global_variables drop column variable_value",
+		"create table mysql.extra (a int)",
+		"create index i on mysql.tidb (comment)",
+		"drop index i on mysql.tidb",
+	} {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil, Commentf("%s", sql))
+		c.Assert(err.Error(), Matches, ".*command denied.*", Commentf("%s", sql))
+	}
+	tk.MustExec("use mysql")
+	_, err := tk.Exec("delete from stats_meta")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select count(*) from mysql.global_variables")
+	tk.MustExec("use test")
+	tk.MustExec("set global sql_mode = ''")
+}
+
 // tidb_general_log shows the server's [log] general-log setting; a client must
 // not be able to switch server-wide logging.
 func (s *testSessionSuite) TestGeneralLogIsReadOnly(c *C) {

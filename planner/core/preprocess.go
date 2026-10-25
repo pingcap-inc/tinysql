@@ -66,6 +66,10 @@ type preprocessor struct {
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	p.checkSystemSchemaWrite(in)
+	if p.err != nil {
+		return in, true
+	}
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable

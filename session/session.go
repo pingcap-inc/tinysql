@@ -824,6 +824,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 
 	s.SetValue(sessionctx.Initing, true)
+	// Bootstrap creates and fills the mysql system tables, which client
+	// sessions may not write.
+	s.sessionVars.InRestrictedSQL = true
+	s.sessionVars.DisallowMultiStatements = true
 	bootstrap(s)
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
