@@ -251,9 +251,9 @@ type handshakeResponse41 struct {
 func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
 	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
-	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packetData", data))
+	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.Int("packetLen", len(data)))
 	if len(data) < 2+3 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return 0, mysql.ErrMalformPacket
 	}
 	offset := 0
@@ -278,7 +278,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.Int("packetLen", len(data)))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -307,7 +307,7 @@ func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return 0, mysql.ErrMalformPacket
 	}
 
@@ -332,7 +332,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.Int("packetLen", len(data)))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -428,7 +428,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return mysql.ErrMalformPacket
 	}
 
