@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -165,6 +164,9 @@ type SessionVars struct {
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
+
+	// User is the account the client logged in as; empty for internal sessions.
+	User string
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
@@ -622,8 +624,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TiDBInitChunkSize:
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
-	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBDDLReorgPriority:

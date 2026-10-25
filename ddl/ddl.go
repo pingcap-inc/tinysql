@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"go.uber.org/zap"
 )
 
@@ -428,7 +429,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", redact.SQL(job.Query)),
+		zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("user", ctx.GetSessionVars().User))
 
 	var historyJob *model.Job
 	jobID := job.ID

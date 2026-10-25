@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -181,7 +182,13 @@ func (s *session) SetCollation(coID int) error {
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := infoschema.GetInfoSchema(s)
+	// A session that has not run a statement yet has no transaction InfoSchema.
+	var is infoschema.InfoSchema
+	if s.sessionVars.TxnCtx.InfoSchema != nil {
+		is = infoschema.GetInfoSchema(s)
+	} else {
+		is = domain.GetDomain(s).InfoSchema()
+	}
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)
@@ -582,8 +589,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logutil.Logger(ctx).Warn("parse SQL failed",
-			zap.Error(err),
-			zap.String("SQL", sql))
+			zap.String("error", redact.SQL(err.Error())),
+			zap.String("SQL", redact.SQL(sql)))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -604,8 +611,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err != nil {
 			s.rollbackOnError(ctx)
 			logutil.Logger(ctx).Warn("compile SQL failed",
-				zap.Error(err),
-				zap.String("SQL", sql))
+				zap.String("error", redact.SQL(err.Error())),
+				zap.String("SQL", redact.SQL(sql)))
 			return nil, err
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)

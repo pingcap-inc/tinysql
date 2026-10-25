@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"go.uber.org/zap"
 )
 
@@ -111,7 +112,8 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.BgLogger().Error("syntax error", zap.Error(err))
+	// The parser error quotes the SQL near the error, so mask its literals.
+	logutil.BgLogger().Error("syntax error", zap.String("error", redact.SQL(err.Error())))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {

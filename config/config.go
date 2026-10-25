@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
@@ -43,16 +44,19 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string   `toml:"host" json:"host"`
-	AdvertiseAddress string   `toml:"advertise-address" json:"advertise-address"`
-	Port             uint     `toml:"port" json:"port"`
-	Cors             string   `toml:"cors" json:"cors"`
-	Store            string   `toml:"store" json:"store"`
-	Path             string   `toml:"path" json:"path"`
-	Lease            string   `toml:"lease" json:"lease"`
-	Log              Log      `toml:"log" json:"log"`
-	Status           Status   `toml:"status" json:"status"`
-	Security         Security `toml:"security" json:"security"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Lease            string `toml:"lease" json:"lease"`
+	// MaxServerConnections limits concurrent client connections, counted from
+	// accept; 0 means unlimited.
+	MaxServerConnections uint32   `toml:"max-server-connections" json:"max-server-connections"`
+	Log                  Log      `toml:"log" json:"log"`
+	Status               Status   `toml:"status" json:"status"`
+	Security             Security `toml:"security" json:"security"`
 }
 
 // Log is the log section of config.
@@ -61,6 +65,10 @@ type Log struct {
 	Level string `toml:"level" json:"level"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
+	// RedactSQL replaces the literals in SQL text written to the log with "?".
+	RedactSQL bool `toml:"redact-sql" json:"redact-sql"`
+	// GeneralLog logs every statement clients send, with connection and user.
+	GeneralLog bool `toml:"general-log" json:"general-log"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -83,6 +91,10 @@ type Status struct {
 	StatusPort uint `toml:"status-port" json:"status-port"`
 
 	ReportStatus bool `toml:"report-status" json:"report-status"`
+
+	// EnablePProf registers the Go pprof handlers on the status server. They
+	// expose heap dumps and process arguments, so they are off by default.
+	EnablePProf bool `toml:"enable-pprof" json:"enable-pprof"`
 }
 
 // Security is the security section of the config.
@@ -107,22 +119,35 @@ var defaultConf = Config{
 	Port:             4000,
 	Cors:             "",
 	Store:            "mocktikv",
-	Path:             "/tmp/tinysql",
+	Path:             "tinysql-data",
 	Lease:            "45s",
+	// The same as max_connections and MySQL's default.
+	MaxServerConnections: 151,
 	Log: Log{
-		Level: "info",
-		File:  logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		Level:      "info",
+		File:       defaultFileLogConfig(),
+		RedactSQL:  true,
+		GeneralLog: false,
 	},
 	Status: Status{
-		ReportStatus: true,
+		ReportStatus: false,
 		StatusHost:   "127.0.0.1",
 		StatusPort:   10080,
+		EnablePProf:  false,
 	},
 }
 
 var (
 	globalConf = atomic.Value{}
 )
+
+// defaultFileLogConfig keeps a week of rotated log files, at most 10 of them.
+func defaultFileLogConfig() logutil.FileLogConfig {
+	c := logutil.NewFileLogConfig(logutil.DefaultLogMaxSize)
+	c.MaxDays = 7
+	c.MaxBackups = 10
+	return c
+}
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
@@ -157,6 +182,22 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	return err
+}
+
+// Valid checks the settings that would otherwise fail open: an empty host
+// listens on every interface, and a wildcard CORS origin makes the status
+// server's responses readable by any web page.
+func (c *Config) Valid() error {
+	if c.Host == "" || c.Port == 0 {
+		return errors.New("host and port must be set")
+	}
+	if c.Status.ReportStatus && (c.Status.StatusHost == "" || c.Status.StatusPort == 0) {
+		return errors.New("status-host and status-port must be set when report-status is true (set report-status = false to disable the status server)")
+	}
+	if strings.TrimSpace(c.Cors) == "*" {
+		return errors.New(`cors = "*" is not allowed; set a single origin such as "http://127.0.0.1:3000"`)
+	}
+	return nil
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

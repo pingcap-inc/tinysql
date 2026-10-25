@@ -176,7 +176,7 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	tk.MustQuery("select 1")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tidb_general_log = 0")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	tk.MustQuery("explain select * from t")
@@ -200,6 +200,16 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
+}
+
+// tidb_general_log shows the server's [log] general-log setting; a client must
+// not be able to switch server-wide logging.
+func (s *testSessionSuite) TestGeneralLogIsReadOnly(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk.Exec("set @@tidb_general_log = 1")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set global tidb_general_log = 1")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {

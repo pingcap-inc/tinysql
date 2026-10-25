@@ -117,6 +117,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			return err
 		}
+		logutil.BgLogger().Info("set global variable", zap.String("name", name),
+			zap.Uint64("conn", sessionVars.ConnectionID), zap.String("user", sessionVars.User))
 	} else {
 		// Set session scope system variable.
 		if sysVar.Scope&variable.ScopeSession == 0 {
