@@ -238,7 +238,7 @@ const (
 	DefInitChunkSize                 = 32
 	DefMaxChunkSize                  = 1024
 	DefMaxPreparedStmtCount          = -1
-	DefWaitTimeout                   = 0
+	DefWaitTimeout                   = 28800 // Stores bootstrapped earlier keep their persisted value.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = true
@@ -277,3 +277,7 @@ var (
 	ServerHostname, _            = os.Hostname()
 	MaxOfMaxAllowedPacket uint64 = 1073741824
 )
+
+// DefMaxAllowedPacket is the default value of max_allowed_packet, which also
+// caps the size of each command packet the server reads after login.
+const DefMaxAllowedPacket uint64 = 67108864

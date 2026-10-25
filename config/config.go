@@ -44,16 +44,19 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string   `toml:"host" json:"host"`
-	AdvertiseAddress string   `toml:"advertise-address" json:"advertise-address"`
-	Port             uint     `toml:"port" json:"port"`
-	Cors             string   `toml:"cors" json:"cors"`
-	Store            string   `toml:"store" json:"store"`
-	Path             string   `toml:"path" json:"path"`
-	Lease            string   `toml:"lease" json:"lease"`
-	Log              Log      `toml:"log" json:"log"`
-	Status           Status   `toml:"status" json:"status"`
-	Security         Security `toml:"security" json:"security"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Lease            string `toml:"lease" json:"lease"`
+	// MaxServerConnections limits concurrent client connections, counted from
+	// accept; 0 means unlimited.
+	MaxServerConnections uint32   `toml:"max-server-connections" json:"max-server-connections"`
+	Log                  Log      `toml:"log" json:"log"`
+	Status               Status   `toml:"status" json:"status"`
+	Security             Security `toml:"security" json:"security"`
 }
 
 // Log is the log section of config.
@@ -114,6 +117,8 @@ var defaultConf = Config{
 	Store:            "mocktikv",
 	Path:             "tinysql-data",
 	Lease:            "45s",
+	// The same as max_connections and MySQL's default.
+	MaxServerConnections: 151,
 	Log: Log{
 		Level: "info",
 		File:  logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),

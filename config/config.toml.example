@@ -21,6 +21,10 @@ path = "tinysql-data"
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
+# Maximum number of concurrent client connections, including ones still logging
+# in. 0 means unlimited.
+max-server-connections = 151
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

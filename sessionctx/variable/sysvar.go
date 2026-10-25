@@ -593,7 +593,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal | ScopeSession, MaxAllowedPacket, "67108864"},
+	{ScopeGlobal | ScopeSession, MaxAllowedPacket, strconv.FormatUint(DefMaxAllowedPacket, 10)},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},

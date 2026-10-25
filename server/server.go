@@ -56,9 +56,20 @@ var (
 )
 
 var (
-	errInvalidSequence = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
-	errInvalidType     = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
-	errAccessDenied    = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
+	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errConCount          = terror.ClassServer.New(mysql.ErrConCount, mysql.MySQLErrName[mysql.ErrConCount])
+	errNetPacketTooLarge = terror.ClassServer.New(mysql.ErrNetPacketTooLarge, mysql.MySQLErrName[mysql.ErrNetPacketTooLarge])
+)
+
+const (
+	// handshakeTimeout bounds the whole handshake, including TLS, so a client
+	// cannot hold a connection open without logging in.
+	handshakeTimeout = 10 * time.Second
+	// preAuthMaxPacketSize caps packets read before the client has logged in. It
+	// leaves room for libmysqlclient's 64 KiB of connection attributes.
+	preAuthMaxPacketSize = 128 * 1024
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -86,6 +97,10 @@ type Server struct {
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+
+	// connCount counts connections from accept until they close, including
+	// ones still in the handshake.
+	connCount int32
 }
 
 // ConnectionCount gets current connection count.
@@ -111,6 +126,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
+	cc.pkt.setMaxPacketSize(preAuthMaxPacketSize)
 	cc.salt = util.RandomBuf(20)
 	return cc
 }
@@ -219,6 +235,10 @@ func (s *Server) Run() error {
 		}
 
 		clientConn := s.newConn(conn)
+		if !s.acquireConnSlot() {
+			s.rejectTooManyConnections(clientConn)
+			continue
+		}
 
 		go s.onConn(clientConn)
 	}
@@ -263,14 +283,48 @@ func (s *Server) Close() {
 
 }
 
+// acquireConnSlot reserves a connection slot, or reports that the
+// max-server-connections limit is reached.
+func (s *Server) acquireConnSlot() bool {
+	n := atomic.AddInt32(&s.connCount, 1)
+	if limit := s.cfg.MaxServerConnections; limit > 0 && uint32(n) > limit {
+		atomic.AddInt32(&s.connCount, -1)
+		return false
+	}
+	return true
+}
+
+func (s *Server) rejectTooManyConnections(cc *clientConn) {
+	logutil.BgLogger().Warn("too many connections, rejecting",
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()), zap.Uint32("limit", s.cfg.MaxServerConnections))
+	terror.Log(cc.bufReadConn.SetDeadline(time.Now().Add(time.Second)))
+	terror.Log(cc.writeError(errConCount))
+	terror.Log(cc.flush())
+	terror.Log(cc.bufReadConn.Close())
+}
+
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+	defer atomic.AddInt32(&s.connCount, -1)
+	defer func() {
+		// clientConn.Run recovers its own panics; this covers the handshake.
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("connection handshake panic", zap.Any("err", r), zap.Stack("stack"))
+			terror.Log(conn.bufReadConn.Close())
+		}
+	}()
+
+	terror.Log(conn.bufReadConn.SetDeadline(time.Now().Add(handshakeTimeout)))
 	if err := conn.handshake(ctx); err != nil {
+		logutil.Logger(ctx).Info("handshake failed",
+			zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()), zap.String("user", conn.user), zap.Error(err))
 		err = conn.Close()
 		terror.Log(errors.Trace(err))
 		return
 	}
+	terror.Log(conn.bufReadConn.SetDeadline(time.Time{}))
+	conn.pkt.setMaxPacketSize(conn.maxAllowedPacket(ctx))
 
 	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
@@ -292,8 +346,9 @@ func killConn(conn *clientConn) {
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("[server] kill all connections.")
 
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	// closeWithoutLock deletes from s.clients, so this needs the write lock.
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
@@ -344,7 +399,9 @@ func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
 		case <-ticker:
 		}
 	}
-	close(done)
+	if done != nil {
+		close(done)
+	}
 }
 
 func (s *Server) kickIdleConnection() {
@@ -373,6 +430,8 @@ func init() {
 		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
 		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
 		mysql.ErrInvalidType:       mysql.ErrInvalidType,
+		mysql.ErrConCount:          mysql.ErrConCount,
+		mysql.ErrNetPacketTooLarge: mysql.ErrNetPacketTooLarge,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

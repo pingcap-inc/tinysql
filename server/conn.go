@@ -223,6 +223,18 @@ func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.writePacket(data)
 }
 
+// maxAllowedPacket returns the session's max_allowed_packet, which caps the
+// size of each command packet after login.
+func (cc *clientConn) maxAllowedPacket(ctx context.Context) uint64 {
+	if valStr, ok := cc.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket); ok {
+		if v, err := strconv.ParseUint(valStr, 10, 64); err == nil && v > 0 {
+			return v
+		}
+		logutil.Logger(ctx).Warn("invalid max_allowed_packet, using the default", zap.String("value", valStr))
+	}
+	return variable.DefMaxAllowedPacket
+}
+
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
@@ -658,9 +670,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
+			cmd := ""
+			if len(data) > 0 {
+				cmd = mysql.Command2Str[data[0]]
+			}
 			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
-				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("command", cmd),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("err", errStrForLog(err)),
@@ -710,6 +726,9 @@ func errStrForLog(err error) string {
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
+	if len(data) == 0 {
+		return mysql.ErrMalformPacket
+	}
 	cmd := data[0]
 	data = data[1:]
 	vars := cc.ctx.GetSessionVars()
@@ -1141,6 +1160,9 @@ func (cc getLastStmtInConn) String() string {
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		return queryStrForLog(string(hack.String(data)))
 	case mysql.ComStmtClose, mysql.ComStmtReset:
+		if len(data) < 4 {
+			return mysql.Command2Str[cmd]
+		}
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
 	default:

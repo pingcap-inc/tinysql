@@ -181,7 +181,13 @@ func (s *session) SetCollation(coID int) error {
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := infoschema.GetInfoSchema(s)
+	// A session that has not run a statement yet has no transaction InfoSchema.
+	var is infoschema.InfoSchema
+	if s.sessionVars.TxnCtx.InfoSchema != nil {
+		is = infoschema.GetInfoSchema(s)
+	} else {
+		is = domain.GetDomain(s).InfoSchema()
+	}
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)

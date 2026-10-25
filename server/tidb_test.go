@@ -15,9 +15,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
@@ -106,6 +110,59 @@ func (ts *TidbTestSuite) TestStatusServerHasNoPProfByDefault(c *C) {
 	c.Assert(err, IsNil)
 	resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+}
+
+// rawLogin opens a connection to the test server and logs in as root with a
+// hand-written HandshakeResponse41, so the test can then send raw packets.
+func rawLogin(c *C) net.Conn {
+	conn, err := net.Dial("tcp", "127.0.0.1:4001")
+	c.Assert(err, IsNil)
+	c.Assert(conn.SetDeadline(time.Now().Add(10*time.Second)), IsNil)
+	greeting := readRawPacket(c, conn)
+	// version(1) server-version\0 conn-id(4) salt1(8) filler(1) cap(2) charset(1) status(2) cap(2) authlen(1) reserved(10) salt2(12)\0
+	pos := 1 + bytes.IndexByte(greeting[1:], 0) + 1 + 4
+	salt := append([]byte{}, greeting[pos:pos+8]...)
+	pos += 8 + 1 + 2 + 1 + 2 + 2 + 1 + 10
+	salt = append(salt, greeting[pos:pos+12]...)
+
+	capability := tmysql.ClientProtocol41 | tmysql.ClientSecureConnection | tmysql.ClientLongPassword
+	resp := []byte{byte(capability), byte(capability >> 8), byte(capability >> 16), byte(capability >> 24), 0, 0, 0, 1, 33}
+	resp = append(resp, make([]byte, 23)...)
+	resp = append(resp, []byte("root\x00")...)
+	auth := scramble(salt, testRootPassword)
+	resp = append(resp, byte(len(auth)))
+	resp = append(resp, auth...)
+	writeRawPacket(c, conn, 1, resp)
+	ok := readRawPacket(c, conn)
+	c.Assert(ok[0], Equals, byte(tmysql.OKHeader), Commentf("login failed: %q", ok))
+	return conn
+}
+
+func readRawPacket(c *C, conn net.Conn) []byte {
+	var header [4]byte
+	_, err := io.ReadFull(conn, header[:])
+	c.Assert(err, IsNil)
+	data := make([]byte, int(header[0])|int(header[1])<<8|int(header[2])<<16)
+	_, err = io.ReadFull(conn, data)
+	c.Assert(err, IsNil)
+	return data
+}
+
+func writeRawPacket(c *C, conn net.Conn, seq byte, payload []byte) {
+	header := []byte{byte(len(payload)), byte(len(payload) >> 8), byte(len(payload) >> 16), seq}
+	_, err := conn.Write(append(header, payload...))
+	c.Assert(err, IsNil)
+}
+
+// An empty command packet gets an error and the connection keeps working.
+func (ts *TidbTestSuite) TestEmptyCommandPacket(c *C) {
+	c.Parallel()
+	conn := rawLogin(c)
+	defer conn.Close()
+	writeRawPacket(c, conn, 0, nil)
+	c.Assert(readRawPacket(c, conn)[0], Equals, byte(tmysql.ErrHeader))
+	writeRawPacket(c, conn, 0, []byte{tmysql.ComPing})
+	c.Assert(readRawPacket(c, conn)[0], Equals, byte(tmysql.OKHeader))
 }
 
 func (ts *TidbTestSuite) TestNewServerRequiresRootPassword(c *C) {

@@ -52,6 +52,9 @@ type packetIO struct {
 	bufWriter   *bufio.Writer
 	sequence    uint8
 	readTimeout time.Duration
+	// maxPacketSize caps the size of one logical packet (all its fragments);
+	// 0 means no limit.
+	maxPacketSize uint64
 }
 
 func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
@@ -67,9 +70,19 @@ func (p *packetIO) setBufferedReadConn(bufReadConn *bufferedReadConn) {
 
 func (p *packetIO) setReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
+	if timeout == 0 {
+		// Clear any deadline left over from an earlier timeout.
+		terror.Log(p.bufReadConn.SetReadDeadline(time.Time{}))
+	}
 }
 
-func (p *packetIO) readOnePacket() ([]byte, error) {
+func (p *packetIO) setMaxPacketSize(size uint64) {
+	p.maxPacketSize = size
+}
+
+// readOnePacket reads one packet fragment. received is the size of the
+// fragments of the same logical packet already read.
+func (p *packetIO) readOnePacket(received int) ([]byte, error) {
 	var header [4]byte
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
@@ -88,6 +101,10 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	p.sequence++
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
+	// Check the declared size before allocating it.
+	if p.maxPacketSize > 0 && uint64(received)+uint64(length) > p.maxPacketSize {
+		return nil, errNetPacketTooLarge
+	}
 
 	data := make([]byte, length)
 	if p.readTimeout > 0 {
@@ -102,7 +119,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
-	data, err := p.readOnePacket()
+	data, err := p.readOnePacket(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -113,7 +130,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 
 	// handle multi-packet
 	for {
-		buf, err := p.readOnePacket()
+		buf, err := p.readOnePacket(len(data))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
