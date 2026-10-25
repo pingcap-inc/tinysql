@@ -65,6 +65,10 @@ type Log struct {
 	Level string `toml:"level" json:"level"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
+	// RedactSQL replaces the literals in SQL text written to the log with "?".
+	RedactSQL bool `toml:"redact-sql" json:"redact-sql"`
+	// GeneralLog logs every statement clients send, with connection and user.
+	GeneralLog bool `toml:"general-log" json:"general-log"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -120,8 +124,10 @@ var defaultConf = Config{
 	// The same as max_connections and MySQL's default.
 	MaxServerConnections: 151,
 	Log: Log{
-		Level: "info",
-		File:  logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		Level:      "info",
+		File:       defaultFileLogConfig(),
+		RedactSQL:  true,
+		GeneralLog: false,
 	},
 	Status: Status{
 		ReportStatus: false,
@@ -134,6 +140,14 @@ var defaultConf = Config{
 var (
 	globalConf = atomic.Value{}
 )
+
+// defaultFileLogConfig keeps a week of rotated log files, at most 10 of them.
+func defaultFileLogConfig() logutil.FileLogConfig {
+	c := logutil.NewFileLogConfig(logutil.DefaultLogMaxSize)
+	c.MaxDays = 7
+	c.MaxBackups = 10
+	return c
+}
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {

@@ -326,7 +326,7 @@ func (s *Server) onConn(conn *clientConn) {
 	terror.Log(conn.bufReadConn.SetDeadline(time.Time{}))
 	conn.pkt.setMaxPacketSize(conn.maxAllowedPacket(ctx))
 
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()), zap.String("user", conn.user))
 
 	defer func() {
 		logutil.Logger(ctx).Info("connection closed")

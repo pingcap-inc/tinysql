@@ -29,6 +29,13 @@ max-server-connections = 151
 # Log level: debug, info, warn, error, fatal.
 level = "info"
 
+# Replace the literal values in SQL text written to the log with "?". Set to
+# false (or start with -redact-sql=false) only when debugging locally.
+redact-sql = true
+
+# Log every statement clients send, with connection ID, user and schema.
+general-log = false
+
 # File logging.
 [log.file]
 # Log file name.
@@ -36,6 +43,12 @@ filename = ""
 
 # Max log file size in MB (upper limit to 4096MB).
 max-size = 300
+
+# Days to keep rotated log files.
+max-days = 7
+
+# Number of rotated log files to keep.
+max-backups = 10
 
 [status]
 # Start the status HTTP server. It has no authentication, so it is off by default.

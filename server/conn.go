@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -565,6 +566,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return err
 	}
+	cc.ctx.GetSessionVars().User = cc.user
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -679,7 +681,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("command", cmd),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
-				zap.String("err", errStrForLog(err)),
+				// Parse errors quote the SQL near the error, so mask the text too.
+				zap.String("err", redact.SQL(errStrForLog(err))),
 			)
 			err1 := cc.writeError(err)
 			terror.Log(err1)
@@ -707,6 +710,7 @@ func (cc *clientConn) ShutdownOrNotify() bool {
 
 func queryStrForLog(query string) string {
 	const size = 4096
+	query = redact.SQL(query)
 	if len(query) > size {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
@@ -882,6 +886,10 @@ func (cc *clientConn) writeEOF(serverStatus uint16) error {
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	if atomic.LoadUint32(&variable.ProcessGeneralLog) == 1 {
+		logutil.Logger(ctx).Info("GENERAL_LOG", zap.String("user", cc.user),
+			zap.String("schema", cc.ctx.GetSessionVars().CurrentDB), zap.String("sql", queryStrForLog(sql)))
+	}
 	rss, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/signal"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -53,6 +54,8 @@ const (
 	nmCors             = "cors"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
+	nmRedactSQL        = "redact-sql"
+	nmGeneralLog       = "general-log"
 	nmReportStatus     = "report-status"
 	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
@@ -78,8 +81,10 @@ var (
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 
 	// Log
-	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
-	logFile  = flag.String(nmLogFile, "", "log file path")
+	logLevel   = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile    = flag.String(nmLogFile, "", "log file path")
+	redactSQL  = flagBoolean(nmRedactSQL, true, "replace the literal values in logged SQL with ?")
+	generalLog = flagBoolean(nmGeneralLog, false, "log every statement clients send")
 
 	// Status
 	reportStatus = flagBoolean(nmReportStatus, false, "If enable status report HTTP service.")
@@ -224,6 +229,12 @@ func overrideConfig() {
 	if actualFlags[nmLogFile] {
 		cfg.Log.File.Filename = *logFile
 	}
+	if actualFlags[nmRedactSQL] {
+		cfg.Log.RedactSQL = *redactSQL
+	}
+	if actualFlags[nmGeneralLog] {
+		cfg.Log.GeneralLog = *generalLog
+	}
 
 	// Status
 	if actualFlags[nmReportStatus] {
@@ -261,6 +272,12 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.DataDir].Value = cfg.Path
+
+	redact.SetEnabled(cfg.Log.RedactSQL)
+	if cfg.Log.GeneralLog {
+		atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+		variable.SysVars[variable.TiDBGeneralLog].Value = "1"
+	}
 }
 
 func setupLog() {

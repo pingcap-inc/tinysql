@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -588,8 +589,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logutil.Logger(ctx).Warn("parse SQL failed",
-			zap.Error(err),
-			zap.String("SQL", sql))
+			zap.String("error", redact.SQL(err.Error())),
+			zap.String("SQL", redact.SQL(sql)))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -610,8 +611,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err != nil {
 			s.rollbackOnError(ctx)
 			logutil.Logger(ctx).Warn("compile SQL failed",
-				zap.Error(err),
-				zap.String("SQL", sql))
+				zap.String("error", redact.SQL(err.Error())),
+				zap.String("SQL", redact.SQL(sql)))
 			return nil, err
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)
