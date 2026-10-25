@@ -244,6 +244,7 @@ type handshakeResponse41 struct {
 	User       string
 	DBName     string
 	Auth       []byte
+	AuthPlugin string
 	Attrs      map[string]string
 }
 
@@ -251,9 +252,9 @@ type handshakeResponse41 struct {
 func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
 	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
-	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packetData", data))
+	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.Int("packetLen", len(data)))
 	if len(data) < 2+3 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return 0, mysql.ErrMalformPacket
 	}
 	offset := 0
@@ -278,7 +279,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.Int("packetLen", len(data)))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -307,7 +308,7 @@ func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return 0, mysql.ErrMalformPacket
 	}
 
@@ -332,7 +333,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.Int("packetLen", len(data)))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -370,9 +371,11 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
-		// TODO: Support mysql.ClientPluginAuth, skip it now
-		idx := bytes.IndexByte(data[offset:], 0)
-		offset = offset + idx + 1
+		// Some clients set the flag but send no plugin name; leave offset alone then.
+		if idx := bytes.IndexByte(data[offset:], 0); idx >= 0 {
+			packet.AuthPlugin = string(data[offset : offset+idx])
+			offset = offset + idx + 1
+		}
 	}
 
 	if packet.Capability&mysql.ClientConnectAtts > 0 {
@@ -428,7 +431,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.Int("packetLen", len(data)))
 		return mysql.ErrMalformPacket
 	}
 
@@ -480,8 +483,34 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	err = cc.openSessionAndDoAuth()
+	if resp.Capability&mysql.ClientPluginAuth > 0 && resp.AuthPlugin != "" && resp.AuthPlugin != nativePasswordPlugin {
+		// The client answered with another plugin (for example MySQL 8's
+		// caching_sha2_password); ask it to answer with mysql_native_password.
+		if resp.Auth, err = cc.authSwitchRequest(); err != nil {
+			return err
+		}
+	}
+
+	err = cc.openSessionAndDoAuth(resp.Auth)
 	return err
+}
+
+// authSwitchRequest asks the client to authenticate with mysql_native_password
+// using the original salt, and returns its new auth response.
+func (cc *clientConn) authSwitchRequest() ([]byte, error) {
+	data := make([]byte, 4, 4+1+len(nativePasswordPlugin)+1+len(cc.salt)+1)
+	data = append(data, 0xfe)
+	data = append(data, nativePasswordPlugin...)
+	data = append(data, 0)
+	data = append(data, cc.salt...)
+	data = append(data, 0)
+	if err := cc.writePacket(data); err != nil {
+		return nil, err
+	}
+	if err := cc.flush(); err != nil {
+		return nil, err
+	}
+	return cc.readPacket()
 }
 
 func (cc *clientConn) SessionStatusToString() string {
@@ -498,7 +527,22 @@ func (cc *clientConn) SessionStatusToString() string {
 	)
 }
 
-func (cc *clientConn) openSessionAndDoAuth() error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
+	// Authenticate before anything else runs for this connection.
+	if cc.user != rootUser || !checkNativePassword(cc.salt, authData, cc.server.cfg.Security.RootPasswordHash) {
+		hasPassword := "YES"
+		if len(authData) == 0 {
+			hasPassword = "NO"
+		}
+		host, err := cc.PeerHost(hasPassword)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Warn("authentication failed",
+			zap.Uint32("conn", cc.connectionID), zap.String("user", cc.user), zap.String("host", host))
+		return errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword)
+	}
+
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
 		tlsState := cc.tlsConn.ConnectionState()

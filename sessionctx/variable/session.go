@@ -616,7 +616,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)

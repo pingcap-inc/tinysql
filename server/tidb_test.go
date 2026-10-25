@@ -16,6 +16,9 @@ package server
 
 import (
 	"context"
+	"database/sql"
+
+	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -47,6 +50,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	cfg.Port = 4001
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 10090
+	cfg.Security.RootPasswordHash = NativePasswordHash(testRootPassword)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -70,6 +74,36 @@ func (ts *TidbTestSuite) TearDownSuite(c *C) {
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	runTestIssue3662(c)
+}
+
+func (ts *TidbTestSuite) TestAuthentication(c *C) {
+	c.Parallel()
+	for _, overrider := range []configOverrider{
+		func(config *mysql.Config) { config.Passwd = "wrong" },
+		func(config *mysql.Config) { config.Passwd = "" },
+		func(config *mysql.Config) { config.User = "other" },
+	} {
+		db, err := sql.Open("mysql", getDSN(overrider))
+		c.Assert(err, IsNil)
+		err = db.Ping()
+		db.Close()
+		c.Assert(err, NotNil)
+		mysqlErr, ok := err.(*mysql.MySQLError)
+		c.Assert(ok, IsTrue, Commentf("%v", err))
+		c.Assert(mysqlErr.Number, Equals, uint16(tmysql.ErrAccessDenied))
+	}
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil)
+	defer db.Close()
+	c.Assert(db.Ping(), IsNil)
+}
+
+func (ts *TidbTestSuite) TestNewServerRequiresRootPassword(c *C) {
+	cfg := config.NewConfig()
+	cfg.Port = 4002
+	_, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
 }
 
 func (ts *TidbTestSuite) TestDBNameEscape(c *C) {

@@ -56,6 +56,9 @@ const (
 	nmStatusPort       = "status"
 
 	nmDdlLease = "lease"
+
+	// envRootPassword names the environment variable that sets the root password.
+	envRootPassword = "TINYSQL_ROOT_PASSWORD"
 )
 
 var (
@@ -102,6 +105,7 @@ func main() {
 	if configWarning != "" {
 		log.Warn(configWarning)
 	}
+	setupRootPassword()
 	createStoreAndDomain()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
@@ -251,6 +255,31 @@ func setupLog() {
 	nopLog := func(string, ...interface{}) {}
 	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
+}
+
+// setupRootPassword sets the root account's password hash from
+// TINYSQL_ROOT_PASSWORD or, for an on-disk mocktikv store, from a password file
+// generated in the data directory on first start.
+func setupRootPassword() {
+	password, ok := os.LookupEnv(envRootPassword)
+	switch {
+	case ok && password == "":
+		log.Fatal(envRootPassword + " is set but empty")
+	case ok:
+		log.Info("root password taken from " + envRootPassword)
+	case cfg.Store != "mocktikv" || cfg.Path == "":
+		log.Fatal("set " + envRootPassword + " to choose the root password (required unless the store is an on-disk mocktikv)")
+	default:
+		var file string
+		var err error
+		password, file, err = server.LoadOrCreateRootPassword(cfg.Path)
+		if err != nil {
+			log.Fatal("cannot set up the root password file", zap.Error(err))
+		}
+		log.Info("root password is in "+file+"; connect with: mysql -h 127.0.0.1 -P "+strconv.Itoa(int(cfg.Port))+" -u root -p",
+			zap.String("file", file))
+	}
+	cfg.Security.RootPasswordHash = server.NativePasswordHash(password)
 }
 
 func createServer() {

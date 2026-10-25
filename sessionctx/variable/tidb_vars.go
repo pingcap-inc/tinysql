@@ -47,9 +47,6 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
-	// tidb_config is a read-only variable that shows the config of the current server.
-	TiDBConfig = "tidb_config"
-
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
