@@ -45,6 +45,7 @@ type indentFormatter struct {
 
 var replace = map[rune]string{
 	'\000': "\\0",
+	'\\':   "\\\\",
 	'\'':   "''",
 	'\n':   "\\n",
 	'\r':   "\\r",

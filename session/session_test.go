@@ -16,6 +16,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -200,6 +201,25 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
+}
+
+// A SET GLOBAL value is quoted, so it cannot add statements to the internal
+// REPLACE that persists it.
+func (s *testSessionSuite) TestSetGlobalValueIsEscaped(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	value := `x'); insert into mysql.tidb values ('injected','1','c'); -- \`
+	tk.MustExec("set global ft_boolean_syntax = '" + strings.Replace(strings.Replace(value, `\`, `\\`, -1), "'", "''", -1) + "'")
+	tk.MustQuery("select variable_name from mysql.tidb where variable_name = 'injected'").Check(testkit.Rows())
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name = 'ft_boolean_syntax'").Check(testkit.Rows(value))
+}
+
+// Internal sessions run exactly one statement per call.
+func (s *testSessionSuite) TestRestrictedSQLRejectsMultipleStatements(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1; select 2;")
+	c.Assert(err, NotNil)
+	_, _, err = tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
+	c.Assert(err, IsNil)
 }
 
 // tidb_general_log shows the server's [log] general-log setting; a client must
