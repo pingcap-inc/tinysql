@@ -16,7 +16,6 @@ GO              := GO111MODULE=on go
 GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
-OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -81,7 +80,7 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v --disable-all --deadline=4m \
+	tools/bin/golangci-lint run -v --default=none --timeout=4m \
 	  --enable=misspell \
 	  --enable=ineffassign \
 	  --enable=unused \
@@ -129,29 +128,9 @@ test_part_1: checklist
 
 test_part_2: checkdep gotest gogenerate
 
-upload-coverage: SHELL:=/bin/bash
-upload-coverage:
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
-endif
-
 gotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=error; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
-	@echo "Running in native mode."
 	@export log_level=error; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
-endif
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
@@ -248,14 +227,14 @@ tools/bin/errcheck: tools/check/go.mod
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/misspell:tools/check/go.mod
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+# Built from source at a pinned version (go.sum-verified), not a downloaded script.
+# golangci-lint v2 needs a recent Go; check-static is not part of grading.
+GOLANGCI_LINT_VERSION := v2.14.0
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
+	GOBIN=$(CURDIR)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 # Usage:
 #
