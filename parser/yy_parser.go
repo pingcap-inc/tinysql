@@ -43,6 +43,8 @@ var (
 	ErrTooBigDisplayWidth = terror.ClassParser.New(mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
 	// ErrTooBigPrecision returns for data precision exceed limit.
 	ErrTooBigPrecision = terror.ClassParser.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	// ErrTooBigScale returns for data scale exceed limit.
+	ErrTooBigScale = terror.ClassParser.New(mysql.ErrTooBigScale, mysql.MySQLErrName[mysql.ErrTooBigScale])
 	// ErrUnknownAlterLock returns for no alter lock type found error.
 	ErrUnknownAlterLock = terror.ClassParser.New(mysql.ErrUnknownAlterLock, mysql.MySQLErrName[mysql.ErrUnknownAlterLock])
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
@@ -70,6 +72,7 @@ func init() {
 		mysql.ErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
 		mysql.ErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
 		mysql.ErrTooBigPrecision:         mysql.ErrTooBigPrecision,
+		mysql.ErrTooBigScale:             mysql.ErrTooBigScale,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }
@@ -233,6 +236,9 @@ func (parser *Parser) startOffset(v *yySymType) int {
 
 func (parser *Parser) endOffset(v *yySymType) int {
 	offset := v.offset
+	if offset > len(parser.src) {
+		offset = len(parser.src)
+	}
 	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
 		offset--
 	}
