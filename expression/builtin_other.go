@@ -69,6 +69,8 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	case types.ETReal:
 		sig = &builtinInRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InReal)
+	default:
+		return nil, errUnsupportedEvalType(args[0].GetType().EvalType())
 	}
 	return sig, nil
 }

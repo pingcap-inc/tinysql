@@ -166,7 +166,12 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+		// INSERT and DELETE plans are not physical plans and have no dot form.
+		physicalPlan, ok := e.TargetPlan.(PhysicalPlan)
+		if !ok {
+			return errors.New("explain format 'dot' is not supported for INSERT or DELETE")
+		}
+		e.prepareDotInfo(physicalPlan)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

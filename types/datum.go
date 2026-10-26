@@ -505,11 +505,15 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(sc, target)
 	case mysql.TypeBit:
-		return d.convertToMysqlBit(sc, target)
+		// A stored BIT value cannot be read back (the chunk decoder and the
+		// expression evaluator have no BIT path), so refuse to write one.
+		return Datum{}, errors.Errorf("converting a value to %s is not supported", TypeStr(target.Tp))
 	case mysql.TypeNull:
 		return Datum{}, nil
 	default:
-		panic("should never happen")
+		// TinySQL implements only the types above; DDL still accepts others
+		// (DECIMAL, DATE, ...), so a value for such a column is an error, not a panic.
+		return Datum{}, errors.Errorf("converting a value to %s is not supported", TypeStr(target.Tp))
 	}
 }
 

@@ -322,7 +322,7 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinStringIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringIsNull)
 	default:
-		panic("unexpected types.EvalType")
+		return nil, errUnsupportedEvalType(argTp)
 	}
 	return sig, nil
 }

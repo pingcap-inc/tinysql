@@ -1646,6 +1646,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	if err == nil && len(del.TblColPosInfos) == 0 {
+		// Only virtual tables (information_schema) have no handle to delete by.
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("DELETE on a virtual table")
+	}
 	return del, err
 }
 

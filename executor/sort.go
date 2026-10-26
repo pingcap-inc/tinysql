@@ -16,6 +16,7 @@ package executor
 import (
 	"container/heap"
 	"context"
+	"math"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
@@ -210,7 +211,13 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
-		e.Idx = int(e.limit.Offset)
+		// The offset is a uint64 from the SQL text; one above MaxInt would turn
+		// into a negative index.
+		if e.limit.Offset > math.MaxInt64 {
+			e.Idx = math.MaxInt64
+		} else {
+			e.Idx = int(e.limit.Offset)
+		}
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return err

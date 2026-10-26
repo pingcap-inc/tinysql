@@ -882,6 +882,14 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
+	// _tidb_rowid has no slot among the table's columns (its offset is
+	// len(cols)), so INSERT ... SELECT cannot write it.
+	for _, col := range affectedValuesCols {
+		if col.Offset >= len(insertPlan.Table.Cols()) {
+			return ErrNotSupportedYet.GenWithStackByArgs("INSERT ... SELECT into " + col.Name.O)
+		}
+	}
+
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
