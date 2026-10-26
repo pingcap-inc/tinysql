@@ -29,6 +29,10 @@ import (
 	"sync/atomic"
 )
 
+// Keep the fmt import: checkForNullValue no longer uses it, but solutions to
+// the column TODOs in this file may.
+var _ = fmt.Sprintf
+
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
 // 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
 //    It should be moved to the correct position when the ddl state to be changed to public.
@@ -426,15 +430,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
-	for i, col := range oldCols {
-		if i == 0 {
-			colsStr += "`" + col.Name.L + "` is null"
-		} else {
-			colsStr += " or `" + col.Name.L + "` is null"
-		}
-	}
-	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
+	sql := nullCheckSQL(schema, table, oldCols)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)

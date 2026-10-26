@@ -150,6 +150,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	if emptyRange {
 		return res, nil
 	}
+	accessConds, filterConds, pointRanges := limitEqOrInRanges(accessConds, filterConds)
 
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
@@ -175,9 +176,10 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		length:        lengths[eqOrInCount],
 		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
+	var accesses []expression.Expression
 	if considerDNF {
-		accesses, filters := detachColumnCNFConditions(sctx, newConditions, checker)
-		accessConds = append(accessConds, accesses...)
+		var filters []expression.Expression
+		accesses, filters = detachColumnCNFConditions(sctx, newConditions, checker)
 		filterConds = append(filterConds, filters...)
 	} else {
 		for _, cond := range newConditions {
@@ -185,14 +187,74 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 				filterConds = append(filterConds, cond)
 				continue
 			}
-			accessConds = append(accessConds, cond)
+			accesses = append(accesses, cond)
 		}
 	}
+	// Every point range of the eq/IN prefix is extended by every range of
+	// this column, so their product is bounded too.
+	if pointRanges > 1 && pointRanges*columnRangeCount(sctx, accesses) > MaxPointRanges {
+		filterConds = appendNewConds(filterConds, accesses)
+		accesses = nil
+	}
+	accessConds = append(accessConds, accesses...)
 	ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
 	return res, err
+}
+
+// MaxPointRanges caps how many point ranges the eq/IN conditions on several
+// index columns may expand to: n1 values on the first column times n2 on the
+// second and so on. Exported for tests.
+var MaxPointRanges = 100000
+
+// limitEqOrInRanges keeps the longest prefix of eq/IN access conditions whose
+// point ranges multiply to at most MaxPointRanges, and returns that product.
+// The other conditions are moved to the filters, which are still evaluated on
+// every row read, so the result does not change; only the index scan gets
+// wider. The first column is always kept: its ranges grow only linearly with
+// the statement.
+func limitEqOrInRanges(accesses, filters []expression.Expression) ([]expression.Expression, []expression.Expression, int) {
+	product := 1
+	for i, cond := range accesses {
+		n := 1
+		if f, ok := cond.(*expression.ScalarFunction); ok && f.FuncName.L == ast.In {
+			n = len(f.GetArgs()) - 1
+		}
+		if i > 0 && n > 1 && product > MaxPointRanges/n {
+			return accesses[:i], appendNewConds(filters, accesses[i:]), product
+		}
+		product *= n
+	}
+	return accesses, filters, product
+}
+
+// columnRangeCount returns how many ranges the access conditions on one
+// column build, or 0 if they cannot be built.
+func columnRangeCount(sctx sessionctx.Context, conds []expression.Expression) int {
+	if len(conds) == 0 {
+		return 1
+	}
+	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	points := fullRange
+	for _, cond := range conds {
+		points = rb.intersection(points, rb.build(cond))
+	}
+	if rb.err != nil {
+		return 0
+	}
+	return len(points) / 2
+}
+
+// appendNewConds appends the conditions of add that are not in conds yet.
+func appendNewConds(conds, add []expression.Expression) []expression.Expression {
+	for _, c := range add {
+		if !expression.Contains(conds, c) {
+			conds = append(conds, c)
+		}
+	}
+	return conds
 }
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
@@ -288,6 +350,11 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 				hasResidual = true
 			}
 			totalRanges = append(totalRanges, ranges...)
+			if len(totalRanges) > MaxPointRanges {
+				// Too many ranges in all: scan the whole index and keep the
+				// condition as a filter, as for an item that builds no range.
+				return FullRange(), nil, true, nil
+			}
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(sctx, accesses...))
 		} else if firstColumnChecker.check(item) {
 			if firstColumnChecker.shouldReserve {
@@ -300,6 +367,9 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 				return nil, nil, false, errors.Trace(err)
 			}
 			totalRanges = append(totalRanges, ranges...)
+			if len(totalRanges) > MaxPointRanges {
+				return FullRange(), nil, true, nil
+			}
 			newAccessItems = append(newAccessItems, item)
 		} else {
 			return FullRange(), nil, true, nil

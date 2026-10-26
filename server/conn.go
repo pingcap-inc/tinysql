@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/redact"
+	"github.com/pingcap/tidb/util/sqlescape"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -778,7 +779,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	_, err = cc.ctx.Execute(ctx, "use "+sqlescape.Identifier(db))
 	if err != nil {
 		return err
 	}
@@ -904,6 +905,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 	if rss != nil {
 		if len(rss) == 1 {
+			if r, ok := rss[0].(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
+				// A statement with no result set, kept when the rest were dropped.
+				terror.Call(rss[0].Close)
+				return cc.writeOkWith("", r.AffectedRows(), r.LastInsertID(), r.Status(), r.WarnCount())
+			}
 			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
 			err = cc.writeMultiResultset(ctx, rss, false)
@@ -1104,14 +1110,23 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	return cc.writeEOF(serverStatus)
 }
 
-func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
+func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) (err error) {
+	written := 0
+	defer func() {
+		// On a write error, close the result sets that were never written.
+		for _, rs := range rss[written:] {
+			terror.Call(rs.Close)
+		}
+	}()
 	for i, rs := range rss {
+		written = i + 1
 		lastRs := i == len(rss)-1
 		if r, ok := rs.(*tidbResultSet).recordSet.(sqlexec.MultiQueryNoDelayResult); ok {
 			status := r.Status()
 			if !lastRs {
 				status |= mysql.ServerMoreResultsExists
 			}
+			terror.Call(rs.Close)
 			if err := cc.writeOkWith("", r.AffectedRows(), r.LastInsertID(), status, r.WarnCount()); err != nil {
 				return err
 			}

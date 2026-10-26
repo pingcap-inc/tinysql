@@ -16,6 +16,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -200,6 +201,63 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
+}
+
+// A SET GLOBAL value is quoted, so it cannot add statements to the internal
+// REPLACE that persists it.
+func (s *testSessionSuite) TestSetGlobalValueIsEscaped(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	value := `x'); insert into mysql.tidb values ('injected','1','c'); -- \`
+	tk.MustExec("set global ft_boolean_syntax = '" + strings.Replace(strings.Replace(value, `\`, `\\`, -1), "'", "''", -1) + "'")
+	tk.MustQuery("select variable_name from mysql.tidb where variable_name = 'injected'").Check(testkit.Rows())
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name = 'ft_boolean_syntax'").Check(testkit.Rows(value))
+}
+
+// Internal sessions run exactly one statement per call.
+func (s *testSessionSuite) TestRestrictedSQLRejectsMultipleStatements(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1; select 2;")
+	c.Assert(err, NotNil)
+	_, _, err = tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select 1;")
+	c.Assert(err, IsNil)
+}
+
+// Client sessions may read the mysql system schema but not write it.
+func (s *testSessionSuite) TestSystemSchemaIsReadOnlyForClients(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	for _, sql := range []string{
+		"insert into mysql.tidb values ('x', 'y', 'z')",
+		"replace into mysql.global_variables values ('sql_mode', '')",
+		"delete from mysql.stats_meta",
+		"drop table mysql.global_variables",
+		"alter table mysql.global_variables drop column variable_value",
+		"create table mysql.extra (a int)",
+		"create index i on mysql.tidb (comment)",
+		"drop index i on mysql.tidb",
+	} {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil, Commentf("%s", sql))
+		c.Assert(err.Error(), Matches, ".*command denied.*", Commentf("%s", sql))
+	}
+	tk.MustExec("use mysql")
+	_, err := tk.Exec("delete from stats_meta")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select count(*) from mysql.global_variables")
+	tk.MustExec("use test")
+	tk.MustExec("set global sql_mode = ''")
+}
+
+// A global isolation level that new sessions cannot use is refused, instead
+// of being stored and breaking every new session.
+func (s *testSessionSuite) TestGlobalIsolationLevelMustBeUsable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_skip_isolation_level_check = 1")
+	_, err := tk.Exec("set global tx_isolation = 'SERIALIZABLE'")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set global transaction_isolation = 'READ-UNCOMMITTED'")
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tx_isolation = 'REPEATABLE-READ'")
+	testkit.NewTestKitWithInit(c, s.store).MustQuery("select 1").Check(testkit.Rows("1"))
 }
 
 // tidb_general_log shows the server's [log] general-log setting; a client must

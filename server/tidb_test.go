@@ -165,6 +165,42 @@ func (ts *TidbTestSuite) TestEmptyCommandPacket(c *C) {
 	c.Assert(readRawPacket(c, conn)[0], Equals, byte(tmysql.OKHeader))
 }
 
+// Without CLIENT_MULTI_STATEMENTS (the Go driver's default) a statement batch
+// is refused; with it, the batch runs.
+func (ts *TidbTestSuite) TestMultiStatementsNeedTheCapability(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil)
+	defer db.Close()
+	_, err = db.Exec("select 1; select 2")
+	c.Assert(err, NotNil)
+
+	multi, err := sql.Open("mysql", getDSN(func(config *mysql.Config) { config.MultiStatements = true }))
+	c.Assert(err, IsNil)
+	defer multi.Close()
+	// Two reads, no DDL: concurrent DDL would hit the skeleton's unimplemented
+	// lock resolution in the parallel tests.
+	_, err = multi.Exec("select 1; select 2")
+	c.Assert(err, IsNil)
+}
+
+// A database name from the handshake is quoted before USE runs it.
+func (ts *TidbTestSuite) TestHandshakeDBNameIsQuoted(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) { config.DBName = "test`; create database injected_db; -- " }))
+	c.Assert(err, IsNil)
+	c.Assert(db.Ping(), NotNil)
+	db.Close()
+
+	db, err = sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil)
+	defer db.Close()
+	// count(*) would always be 0 on the course skeleton (aggregation is a
+	// proj5 TODO), so look for the row itself.
+	var name string
+	c.Assert(db.QueryRow("select schema_name from information_schema.schemata where schema_name = 'injected_db'").Scan(&name), Equals, sql.ErrNoRows)
+}
+
 func (ts *TidbTestSuite) TestNewServerRequiresRootPassword(c *C) {
 	cfg := config.NewConfig()
 	cfg.Port = 4002

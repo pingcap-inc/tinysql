@@ -168,6 +168,12 @@ type SessionVars struct {
 	// User is the account the client logged in as; empty for internal sessions.
 	User string
 
+	// DisallowMultiStatements rejects a query text that holds more than one
+	// statement. The server sets it for clients that did not negotiate
+	// CLIENT_MULTI_STATEMENTS, and internal sessions always set it, so values
+	// spliced into internal SQL cannot add statements.
+	DisallowMultiStatements bool
+
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 

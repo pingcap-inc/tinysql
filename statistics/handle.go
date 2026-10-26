@@ -125,6 +125,16 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		return errors.Trace(err)
 	}
 
+	// A version can only come from a commit that already happened, so one
+	// above the current timestamp is corrupt and must not become the
+	// watermark, which would stop all later loads.
+	h.mu.Lock()
+	currentVer, err := h.mu.ctx.GetStore().CurrentVersion()
+	h.mu.Unlock()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
@@ -132,6 +142,11 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
+		if version > currentVer.Ver {
+			logutil.BgLogger().Warn("ignore stats meta with a version from the future",
+				zap.Int64("tableID", physicalID), zap.Uint64("version", version), zap.Uint64("current", currentVer.Ver))
+			continue
+		}
 		lastVersion = version
 		table, ok := is.TableByID(physicalID)
 		if !ok {
@@ -427,6 +442,10 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
+		if rows[i].IsNull(2) || rows[i].IsNull(3) {
+			// The server never writes a NULL bound; such a row is corrupt.
+			return nil, errors.Errorf("stats bucket %d of table %d, histogram %d has a NULL bound", i, tableID, colID)
+		}
 		count := rows[i].GetInt64(0)
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum

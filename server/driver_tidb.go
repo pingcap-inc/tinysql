@@ -61,6 +61,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		return nil, err
 	}
 	se.SetClientCapability(capability)
+	se.GetSessionVars().DisallowMultiStatements = capability&mysql.ClientMultiStatements == 0
 	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		session:   se,

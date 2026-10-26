@@ -588,16 +588,31 @@ func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
+	// Global values are read with one query, as SHOW VARIABLES does, instead
+	// of one internal query per variable.
+	var (
+		globals       map[string]string
+		globalsLoaded bool
+	)
 	for _, v := range variable.SysVars {
-		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, ok, err := variable.GetSessionOnlySysVars(sessionVars, v.Name)
 		if err != nil {
 			return nil, err
 		}
-		row := types.MakeDatums(v.Name, value)
-		records = append(records, row)
+		if !ok {
+			if !globalsLoaded {
+				if globals, err = sessionVars.GlobalVarsAccessor.GetAllSysVars(); err != nil {
+					return nil, err
+				}
+				globalsLoaded = true
+			}
+			if value, ok = globals[v.Name]; !ok {
+				value = v.Value
+			}
+		}
+		records = append(records, types.MakeDatums(v.Name, value))
 	}
-	return
+	return records, nil
 }
 
 func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {

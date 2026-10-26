@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/redact"
+	"github.com/pingcap/tidb/util/sqlescape"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -88,6 +89,9 @@ type stmtRecord struct {
 // StmtHistory holds all histories of statements in a txn.
 type StmtHistory struct {
 	history []*stmtRecord
+	// executed counts the statements run in the transaction without keeping
+	// them, for the statement limit.
+	executed int
 }
 
 // Add appends a stmt to history list.
@@ -99,9 +103,9 @@ func (h *StmtHistory) Add(st sqlexec.Statement, stmtCtx *stmtctx.StatementContex
 	h.history = append(h.history, s)
 }
 
-// Count returns the count of the history.
+// Count returns the number of statements recorded or counted in the transaction.
 func (h *StmtHistory) Count() int {
-	return len(h.history)
+	return len(h.history) + h.executed
 }
 
 type session struct {
@@ -377,11 +381,18 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 	)
 	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
+		if _, ok := rs.(sqlexec.MultiQueryNoDelayResult); ok {
+			// A statement with no result: nothing to read.
+			terror.Call(rs.Close)
+			continue
+		}
 		tmp, err := drainRecordSet(ctx, se, rs)
 		if err != nil {
+			closeRecordSets(recordSets[i:])
 			return nil, nil, err
 		}
 		if err = rs.Close(); err != nil {
+			closeRecordSets(recordSets[i+1:])
 			return nil, nil, err
 		}
 
@@ -409,6 +420,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		se.sessionVars.DisallowMultiStatements = true
 		return se, nil
 	}
 }
@@ -429,6 +441,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		se.sessionVars.DisallowMultiStatements = true
 		return se, nil
 	}
 }
@@ -492,8 +505,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME=%s;`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, sqlescape.String(name))
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
@@ -522,8 +535,16 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	if name == variable.TxnIsolation || name == variable.TransactionIsolation {
+		// SERIALIZABLE and READ-UNCOMMITTED pass only in a session with
+		// tidb_skip_isolation_level_check on; as a global default they would
+		// make every new session fail.
+		if upper := strings.ToUpper(sVal); upper == "SERIALIZABLE" || upper == "READ-UNCOMMITTED" {
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
+		}
+	}
+	sql := fmt.Sprintf(`REPLACE %s.%s VALUES (%s, %s);`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, sqlescape.String(name), sqlescape.String(sVal))
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
 }
@@ -595,6 +616,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
+	if len(stmtNodes) > 1 && s.sessionVars.DisallowMultiStatements {
+		return nil, util.SyntaxError(errors.New("multiple statements in one query are not allowed: the client did not enable CLIENT_MULTI_STATEMENTS"))
+	}
 
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
@@ -605,10 +629,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
+			closeRecordSets(recordSets)
 			return nil, err
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
+			closeRecordSets(recordSets)
 			s.rollbackOnError(ctx)
 			logutil.Logger(ctx).Warn("compile SQL failed",
 				zap.String("error", redact.SQL(err.Error())),
@@ -619,13 +645,16 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.GetSessionVars().DurationCompile = durCompile
 
 		// Step3: Execute the physical plan.
+		executed := recordSets
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
+			closeRecordSets(executed)
 			return nil, err
 		}
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
+		closeRecordSets(recordSets[1:])
 		recordSets = recordSets[:1]
 	}
 
@@ -633,6 +662,14 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return recordSets, nil
+}
+
+// closeRecordSets closes record sets that will not be returned, so their
+// executors and coprocessor workers are released.
+func closeRecordSets(rss []sqlexec.RecordSet) {
+	for _, rs := range rss {
+		terror.Call(rs.Close)
+	}
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -771,6 +808,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	// se1 runs the stats loader's internal SQL.
+	se1.sessionVars.DisallowMultiStatements = true
 	err = dom.UpdateTableStatsLoop(se1)
 	if err != nil {
 		return nil, err
@@ -796,6 +835,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 
 	s.SetValue(sessionctx.Initing, true)
+	// Bootstrap creates and fills the mysql system tables, which client
+	// sessions may not write.
+	s.sessionVars.InRestrictedSQL = true
+	s.sessionVars.DisallowMultiStatements = true
 	bootstrap(s)
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
@@ -1003,7 +1046,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
-				return err
+				// A stored value this session rejects (for example one saved
+				// before a bound was added) must not stop every new session.
+				logutil.BgLogger().Warn("skip a global variable this session cannot use",
+					zap.String("name", varName), zap.Error(err))
 			}
 		}
 	}

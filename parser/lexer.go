@@ -241,7 +241,22 @@ func (s *Scanner) skipWhitespace() rune {
 	return s.r.incAsLongAs(unicode.IsSpace)
 }
 
+// commentSkipped is returned by the comment rules after they consume a
+// comment: the next token is scanned by the loop in scan. Looping there,
+// instead of each rule calling scan again, keeps the stack flat however many
+// comments the input holds.
+const commentSkipped = -1
+
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
+	for {
+		tok, pos, lit = s.scanOnce()
+		if tok != commentSkipped {
+			return
+		}
+	}
+}
+
+func (s *Scanner) scanOnce() (tok int, pos Pos, lit string) {
 	if s.specialComment != nil {
 		// Enter specialComment scan mode.
 		// for scanning such kind of comment: /*! MySQL-specific code */
@@ -344,7 +359,7 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 	s.r.incAsLongAs(func(ch rune) bool {
 		return ch != '\n'
 	})
-	return s.scan()
+	return commentSkipped, pos, ""
 }
 
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
@@ -355,7 +370,7 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 			s.r.incAsLongAs(func(ch rune) bool {
 				return ch != '\n'
 			})
-			return s.scan()
+			return commentSkipped, pos, ""
 		}
 	}
 	if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
@@ -449,7 +464,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			}
 		}
 
-		return s.scan()
+		return commentSkipped, pos, ""
 	}
 	tok = int('/')
 	return
