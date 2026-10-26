@@ -174,7 +174,8 @@ func (b *builtinArithmeticMinusIntSig) minusFUS(result *chunk.Column, lhi64s, rh
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+		// -MinInt64 == MinInt64, so the other checks miss lh >= 0 && rh == MinInt64.
+		if (lh >= 0 && rh == math.MinInt64) || (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -244,7 +245,9 @@ func (b *builtinArithmeticMinusIntSig) minusSU(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if uint64(lh-math.MinInt64) < uint64(rh) {
+		// The same condition as the row-at-a-time path: a signed value minus
+		// an unsigned one fits in BIGINT UNSIGNED only if it is not negative.
+		if lh < 0 || uint64(lh) < uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -259,7 +262,8 @@ func (b *builtinArithmeticMinusIntSig) minusSS(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+		// -MinInt64 == MinInt64, so the other checks miss lh >= 0 && rh == MinInt64.
+		if (lh >= 0 && rh == math.MinInt64) || (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -451,7 +455,7 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 		if rh < 0 && uint64(-rh) > uint64(lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
+		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 

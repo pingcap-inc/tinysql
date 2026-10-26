@@ -87,13 +87,17 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 // evaluate (only int, real and string are implemented). DDL still accepts
 // columns of other types, so this must be an error, not a panic.
 func errUnsupportedEvalType(tp types.EvalType) error {
+	return errors.Errorf("expressions over %s values are not supported", evalTypeName(tp))
+}
+
+// evalTypeName names an EvalType for error messages.
+func evalTypeName(tp types.EvalType) string {
 	// Indexed by EvalType: INT, REAL, DECIMAL, STRING, DATETIME, TIMESTAMP, DURATION, JSON.
 	names := [...]string{"INT", "REAL", "DECIMAL", "STRING", "DATE/DATETIME", "TIMESTAMP", "TIME", "JSON"}
-	name := fmt.Sprintf("eval type %d", tp)
 	if int(tp) < len(names) {
-		name = names[tp]
+		return names[tp]
 	}
-	return errors.Errorf("expressions over %s values are not supported", name)
+	return fmt.Sprintf("eval type %d", tp)
 }
 
 // isSupportedEvalType reports whether TinySQL can evaluate values of tp.

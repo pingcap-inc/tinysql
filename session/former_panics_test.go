@@ -54,7 +54,7 @@ func (s *testFormerPanicsSuite) TearDownSuite(c *C) {
 // Statements that used to panic a connection now fail cleanly or work.
 func (s *testFormerPanicsSuite) TestFormerPanicsFailCleanly(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists fp_t, fp_d, fp_b, fp_u, fp_ok")
+	tk.MustExec("drop table if exists fp_t, fp_d, fp_b, fp_u, fp_ok, fp_s, fp_f")
 	tk.MustExec("create table fp_t (a int, b int)")
 	tk.MustExec("insert into fp_t values (1, 1), (2, 2)")
 
@@ -106,6 +106,13 @@ func (s *testFormerPanicsSuite) TestFormerPanicsFailCleanly(c *C) {
 	mustFail("insert into fp_b values (1, 1)")
 	tk.MustQuery("select a, b from fp_b").Check(testkit.Rows())
 	tk.MustQuery("select count(a) from fp_b")
+	// Arithmetic on a string column read its data as numbers (out of bounds,
+	// and it could crash the server); there is no implicit cast, so it fails.
+	tk.MustExec("create table fp_s (id int, s varchar(10))")
+	tk.MustExec("insert into fp_s values (1, ''), (2, 'a'), (3, '1.5')")
+	mustFail("select id, s + 1 from fp_s")
+	mustFail("select -s from fp_s")
+	tk.MustQuery("select id from fp_s where s = 'a'").Check(testkit.Rows("2"))
 	// A duplicate unique key is a normal error.
 	tk.MustExec("create table fp_u (a int, unique key (a))")
 	tk.MustExec("insert into fp_u values (1)")

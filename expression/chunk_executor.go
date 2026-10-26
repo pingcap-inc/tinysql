@@ -82,6 +82,21 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 		if err := expr.VecEvalInt(ctx, input, result); err != nil {
 			return err
 		}
+		if ft.Tp == mysql.TypeBit {
+			// A BIT column is variable-length in a chunk; write the values as
+			// executeToInt does for the row-at-a-time path.
+			i64s := result.Int64s()
+			n := input.NumRows()
+			buf := chunk.NewColumn(ft, n)
+			for i := 0; i < n; i++ {
+				if result.IsNull(i) {
+					buf.AppendNull()
+				} else {
+					buf.AppendBytes(strconv.AppendUint(make([]byte, 0, 8), uint64(i64s[i]), 10))
+				}
+			}
+			output.SetCol(colIdx, buf)
+		}
 	case types.ETReal:
 		if err := expr.VecEvalReal(ctx, input, result); err != nil {
 			return err

@@ -443,7 +443,8 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		if highCut {
 			ran.HighExclude = false
 		}
-		hasCut = lowCut || highCut
+		// Any cut range may now overlap another, so remember a cut in any of them.
+		hasCut = hasCut || lowCut || highCut
 	}
 	return hasCut
 }
