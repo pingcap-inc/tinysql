@@ -240,7 +240,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
-		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex,
+			ast.ConstraintFulltext:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				p.err = err
@@ -364,7 +365,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
+				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey, ast.ConstraintFulltext:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if p.err != nil {
 					return
@@ -382,6 +383,10 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
+		if IndexColNameWithExpr.Column == nil {
+			// The grammar accepts an expression index part, e.g. ((1)); it has no column.
+			return ErrNotSupportedYet.GenWithStackByArgs("expression index")
+		}
 		name := IndexColNameWithExpr.Column.Name
 		if _, ok := colNames[name.L]; ok {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(name)

@@ -41,6 +41,9 @@ func EncodeHandle(h int64) []byte {
 
 // DecodeHandle decodes handle in data.
 func DecodeHandle(data []byte) (int64, error) {
+	if len(data) < 8 {
+		return 0, errors.Errorf("invalid index value: %d bytes, want 8", len(data))
+	}
 	return int64(binary.BigEndian.Uint64(data)), nil
 }
 
@@ -250,6 +253,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if kv.IsErrNotFound(err) {
 		v := EncodeHandle(h)
 		err = rm.Set(key, v)
+		return 0, err
+	}
+	if err != nil {
+		// With PresumeKeyNotExists the store reports a duplicate key as an
+		// error with no value; there is nothing to decode.
 		return 0, err
 	}
 

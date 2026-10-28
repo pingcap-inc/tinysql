@@ -57,6 +57,39 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
+// ddlTargetSchema returns the in-memory schema (information_schema) a DDL
+// would change, if any, resolving an unqualified name through the current
+// database.
+func (e *DDLExec) ddlTargetSchema() string {
+	var tables []*ast.TableName
+	switch x := e.stmt.(type) {
+	case *ast.CreateTableStmt:
+		tables = []*ast.TableName{x.Table}
+	case *ast.AlterTableStmt:
+		tables = []*ast.TableName{x.Table}
+	case *ast.CreateIndexStmt:
+		tables = []*ast.TableName{x.Table}
+	case *ast.DropIndexStmt:
+		tables = []*ast.TableName{x.Table}
+	case *ast.DropTableStmt:
+		tables = x.Tables
+	case *ast.DropDatabaseStmt:
+		if infoschema.IsMemoryDB(strings.ToLower(x.Name)) {
+			return x.Name
+		}
+	}
+	for _, tn := range tables {
+		schema := tn.Schema.O
+		if schema == "" {
+			schema = e.ctx.GetSessionVars().CurrentDB
+		}
+		if infoschema.IsMemoryDB(strings.ToLower(schema)) {
+			return schema
+		}
+	}
+	return ""
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -69,6 +102,12 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
+
+	// information_schema is in memory: a DDL job for it would be queued and
+	// then fail on the owner again and again, blocking the DDL queue.
+	if schema := e.ddlTargetSchema(); infoschema.IsMemoryDB(strings.ToLower(schema)) {
+		return errors.Errorf("DDL on the virtual database %s is not supported", schema)
+	}
 
 	switch x := e.stmt.(type) {
 	case *ast.AlterTableStmt:
@@ -85,6 +124,11 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
 		err = e.executeDropTableOrView(x)
+	case *ast.TruncateTableStmt:
+		// Not implemented; say so instead of answering OK without doing anything.
+		err = errors.New("TRUNCATE TABLE is not supported")
+	default:
+		err = errors.New("this DDL statement is not supported")
 	}
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,

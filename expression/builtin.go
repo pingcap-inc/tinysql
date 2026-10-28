@@ -83,6 +83,28 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	}
 }
 
+// errUnsupportedEvalType reports an expression over a type TinySQL does not
+// evaluate (only int, real and string are implemented). DDL still accepts
+// columns of other types, so this must be an error, not a panic.
+func errUnsupportedEvalType(tp types.EvalType) error {
+	return errors.Errorf("expressions over %s values are not supported", evalTypeName(tp))
+}
+
+// evalTypeName names an EvalType for error messages.
+func evalTypeName(tp types.EvalType) string {
+	// Indexed by EvalType: INT, REAL, DECIMAL, STRING, DATETIME, TIMESTAMP, DURATION, JSON.
+	names := [...]string{"INT", "REAL", "DECIMAL", "STRING", "DATE/DATETIME", "TIMESTAMP", "TIME", "JSON"}
+	if int(tp) < len(names) {
+		return names[tp]
+	}
+	return fmt.Sprintf("eval type %d", tp)
+}
+
+// isSupportedEvalType reports whether TinySQL can evaluate values of tp.
+func isSupportedEvalType(tp types.EvalType) bool {
+	return tp == types.ETInt || tp == types.ETReal || tp == types.ETString
+}
+
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.

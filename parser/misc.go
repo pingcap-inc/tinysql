@@ -788,7 +788,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	if s.r.peek() == '.' {
 		return 0
 	}
-	if offset > 0 && s.r.s[offset-1] == '.' {
+	if offset > 0 && offset <= len(s.r.s) && s.r.s[offset-1] == '.' {
 		return 0
 	}
 	buf := &s.buf

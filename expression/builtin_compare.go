@@ -177,6 +177,9 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 			sig.setPbCode(tipb.ScalarFuncSig_NEString)
 		}
 	}
+	if sig == nil {
+		return nil, errUnsupportedEvalType(tp)
+	}
 	return
 }
 

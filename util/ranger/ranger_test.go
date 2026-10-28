@@ -447,6 +447,15 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
 		},
 		{
+			// Only the first two points are cut to the prefix, but the ranges
+			// must still be merged so no row is returned twice.
+			indexPos:    2,
+			exprStr:     `d in ("aab", "aac", "b")`,
+			accessConds: "[in(test.t.d, aab, aac, b)]",
+			filterConds: "[in(test.t.d, aab, aac, b)]",
+			resultStr:   "[[\"aa\",\"aa\"] [\"b\",\"b\"]]",
+		},
+		{
 			indexPos:    2,
 			exprStr:     `d not in ("你好啊")`,
 			accessConds: "[]",

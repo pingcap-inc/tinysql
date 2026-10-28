@@ -30,6 +30,7 @@ package parser
 import __yyfmt__ "fmt"
 
 import (
+	"math"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -8396,12 +8397,18 @@ yynewstate:
 		}
 	case 934:
 		{
+			// NUM is a uint64 above MaxInt64, and the product must fit in int64;
+			// otherwise use -1, which makes the executor warn about the hint.
+			var unit int64
 			switch model.NewCIStr(yyS[yypt-0].ident).L {
 			case "mb":
-				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024
+				unit = 1024 * 1024
 			case "gb":
-				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024 * 1024
-			default:
+				unit = 1024 * 1024 * 1024
+			}
+			if n, ok := yyS[yypt-1].item.(int64); ok && unit > 0 && n <= (1<<63-1)/unit {
+				parser.yyVAL.item = n * unit
+			} else {
 				// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
 				parser.yyVAL.item = int64(-1)
 			}
@@ -8598,9 +8605,15 @@ yynewstate:
 		}
 	case 978:
 		{
+			// NUM is a uint64 when it does not fit in int64.
+			jobNumber, ok := yyS[yypt-1].item.(int64)
+			if !ok {
+				yylex.AppendError(yylex.Errorf("ADMIN SHOW DDL JOBS: the number of jobs is too large"))
+				return 1
+			}
 			stmt := &ast.AdminStmt{
 				Tp:        ast.AdminShowDDLJobs,
-				JobNumber: yyS[yypt-1].item.(int64),
+				JobNumber: jobNumber,
 			}
 			if yyS[yypt-0].item != nil {
 				stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -9230,6 +9243,12 @@ yynewstate:
 		}
 	case 1127:
 		{
+			// Converting a larger value to int would wrap it negative and pass every
+			// later upper-bound check.
+			if yyS[yypt-1].item.(uint64) > math.MaxUint32 {
+				yylex.AppendError(ErrTooBigDisplayWidth.GenWithStackByArgs("", uint64(math.MaxUint32)))
+				return 1
+			}
 			parser.yyVAL.item = int(yyS[yypt-1].item.(uint64))
 		}
 	case 1128:
@@ -9274,6 +9293,14 @@ yynewstate:
 		}
 	case 1138:
 		{
+			if yyS[yypt-3].item.(uint64) > math.MaxUint32 {
+				yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(yyS[yypt-3].item, "", uint64(math.MaxUint32)))
+				return 1
+			}
+			if yyS[yypt-1].item.(uint64) > math.MaxUint32 {
+				yylex.AppendError(ErrTooBigScale.GenWithStackByArgs(yyS[yypt-1].item, "", uint64(math.MaxUint32)))
+				return 1
+			}
 			parser.yyVAL.item = &ast.FloatOpt{Flen: int(yyS[yypt-3].item.(uint64)), Decimal: int(yyS[yypt-1].item.(uint64))}
 		}
 	case 1139:

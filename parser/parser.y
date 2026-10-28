@@ -26,6 +26,7 @@
 package parser
 
 import (
+	"math"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -4146,12 +4147,18 @@ HintQueryType:
 HintMemoryQuota:
 	NUM Identifier
 	{
+		// NUM is a uint64 above MaxInt64, and the product must fit in int64;
+		// otherwise use -1, which makes the executor warn about the hint.
+		var unit int64
 		switch model.NewCIStr($2).L {
 		case "mb":
-			$$ = $1.(int64) * 1024 * 1024
+			unit = 1024 * 1024
 		case "gb":
-			$$ = $1.(int64) * 1024 * 1024 * 1024
-		default:
+			unit = 1024 * 1024 * 1024
+		}
+		if n, ok := $1.(int64); ok && unit > 0 && n <= (1<<63-1)/unit {
+			$$ = n * unit
+		} else {
 			// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
 			$$ = int64(-1)
 		}
@@ -4390,9 +4397,15 @@ AdminStmt:
 	}
 |	"ADMIN" "SHOW" "DDL" "JOBS" NUM WhereClauseOptional
 	{
+		// NUM is a uint64 when it does not fit in int64.
+		jobNumber, ok := $5.(int64)
+		if !ok {
+			yylex.AppendError(yylex.Errorf("ADMIN SHOW DDL JOBS: the number of jobs is too large"))
+			return 1
+		}
 		stmt := &ast.AdminStmt{
 		    Tp: ast.AdminShowDDLJobs,
-		    JobNumber: $5.(int64),
+		    JobNumber: jobNumber,
 		}
 		if $6 != nil {
 			stmt.Where = $6.(ast.ExprNode)
@@ -5153,6 +5166,12 @@ DateAndTimeType:
 FieldLen:
 	'(' LengthNum ')'
 	{
+		// Converting a larger value to int would wrap it negative and pass every
+		// later upper-bound check.
+		if $2.(uint64) > math.MaxUint32 {
+			yylex.AppendError(ErrTooBigDisplayWidth.GenWithStackByArgs("", uint64(math.MaxUint32)))
+			return 1
+		}
 		$$ = int($2.(uint64))
 	}
 
@@ -5204,6 +5223,14 @@ FloatOpt:
 Precision:
 	'(' LengthNum ',' LengthNum ')'
 	{
+		if $2.(uint64) > math.MaxUint32 {
+			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs($2, "", uint64(math.MaxUint32)))
+			return 1
+		}
+		if $4.(uint64) > math.MaxUint32 {
+			yylex.AppendError(ErrTooBigScale.GenWithStackByArgs($4, "", uint64(math.MaxUint32)))
+			return 1
+		}
 		$$ = &ast.FloatOpt{Flen: int($2.(uint64)), Decimal: int($4.(uint64))}
 	}
 

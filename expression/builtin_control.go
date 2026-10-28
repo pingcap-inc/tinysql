@@ -122,6 +122,9 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
+	if !isSupportedEvalType(evalTps) {
+		return nil, errUnsupportedEvalType(evalTps)
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
@@ -225,6 +228,9 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
+	if !isSupportedEvalType(evalTps) {
+		return nil, errUnsupportedEvalType(evalTps)
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {

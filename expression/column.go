@@ -52,6 +52,17 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
+// checkEvalType refuses to read the column's data as another type.
+// TinySQL has no implicit cast step, so a builtin may ask for, say, the float
+// values of a string column; reading the chunk column's raw data that way
+// goes out of bounds and can corrupt memory.
+func (col *Column) checkEvalType(want types.EvalType) error {
+	if got := col.RetType.EvalType(); got != want {
+		return errors.Errorf("column %s is not a %s value and TinySQL does not convert it implicitly", col, evalTypeName(want))
+	}
+	return nil
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
@@ -70,12 +81,18 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 		}
 		return nil
 	}
+	if err := col.checkEvalType(types.ETInt); err != nil {
+		return err
+	}
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if err := col.checkEvalType(types.ETReal); err != nil {
+		return err
+	}
 	n := input.NumRows()
 	src := input.Column(col.Index)
 	if col.GetType().Tp == mysql.TypeFloat {
@@ -125,6 +142,9 @@ func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, res
 		}
 		return nil
 	}
+	if err := col.checkEvalType(types.ETString); err != nil {
+		return err
+	}
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
@@ -169,6 +189,9 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
+	if err := col.checkEvalType(types.ETInt); err != nil {
+		return 0, true, err
+	}
 	return row.GetInt64(col.Index), false, nil
 }
 
@@ -176,6 +199,9 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	if row.IsNull(col.Index) {
 		return 0, true, nil
+	}
+	if err := col.checkEvalType(types.ETReal); err != nil {
+		return 0, true, err
 	}
 	if col.GetType().Tp == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
@@ -194,6 +220,9 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 		val := row.GetDatum(col.Index, col.RetType)
 		res, err := val.ToString()
 		return res, err != nil, err
+	}
+	if err := col.checkEvalType(types.ETString); err != nil {
+		return "", true, err
 	}
 
 	val := row.GetString(col.Index)

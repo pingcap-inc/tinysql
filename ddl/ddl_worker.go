@@ -300,6 +300,9 @@ func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
+	// The last job run and the state it was left in, to notice a job that
+	// makes no progress.
+	var lastJob *model.Job
 	for {
 		if isChanClosed(w.quitCh) {
 			return nil
@@ -309,6 +312,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			job       *model.Job
 			schemaVer int64
 			runJobErr error
+			ran       bool
 		)
 		waitTime := 2 * d.lease
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -348,6 +352,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
+			ran = true
 			tidbutil.WithRecovery(func() {
 				schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			}, func(r interface{}) {
@@ -382,6 +387,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// No job now, return and retry getting later.
 			return nil
 		}
+		if ran && runJobErr == nil {
+			// A job that returns without error but changes neither its state
+			// nor the schema version would otherwise be retried at once, again
+			// and again, holding the queue and a CPU.
+			if schemaVer == 0 && lastJob != nil && lastJob.ID == job.ID &&
+				lastJob.State == job.State && lastJob.SchemaState == job.SchemaState {
+				select {
+				case <-time.After(noProgressWait(d.lease)):
+				case <-w.quitCh:
+					return nil
+				}
+			}
+			lastJob = &model.Job{ID: job.ID, State: job.State, SchemaState: job.SchemaState}
+		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
 		d.mu.RLock()
@@ -396,6 +415,18 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
+}
+
+// noProgressWait is how long to wait before rerunning a job that made no
+// progress: the schema lease, but between 10ms and 1s.
+func noProgressWait(lease time.Duration) time.Duration {
+	switch {
+	case lease < 10*time.Millisecond:
+		return 10 * time.Millisecond
+	case lease > time.Second:
+		return time.Second
+	}
+	return lease
 }
 
 // waitDependencyJobFinished waits for the dependency-job to be finished.

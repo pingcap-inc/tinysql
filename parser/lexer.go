@@ -444,13 +444,17 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				Pos: Pos{
 					pos.Line,
 					pos.Col,
-					pos.Offset + sqlOffsetInComment(comment),
+					pos.Offset + len(specCodeStart.FindString(comment)),
 				},
 			}
 		}
 
 		if strings.HasPrefix(comment, "/*T!") {
-			commentVersion := extractVersionCodeInComment(comment)
+			// Take the version only from the comment's own prefix: a number
+			// elsewhere in the comment would make the inner scanner rescan
+			// the whole comment, recursing until the stack overflows.
+			prefix := specVersionCodeStart.FindString(comment)
+			commentVersion := extractVersionCodeInComment(prefix)
 			if commentVersion != CommentCodeNoVersion && commentVersion <= CommentCodeCurrentVersion {
 				sql := SpecVersionCodePattern.ReplaceAllStringFunc(comment, TrimCodeVersionComment)
 				s.specialComment = &mysqlSpecificCodeScanner{
@@ -458,7 +462,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 					Pos: Pos{
 						pos.Line,
 						pos.Col,
-						pos.Offset + sqlOffsetInComment(comment),
+						pos.Offset + len(prefix),
 					},
 				}
 			}
@@ -470,20 +474,15 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
+// sqlOffsetInComment returns the offset of the first character after the
+// "/*+" of an optimizer hint comment and any whitespace that follows it.
+// MySQL-specific (/*!) and TiDB-specific (/*T!) comments instead use the
+// length their own prefix pattern strips, so the inner token offsets match
+// the text that is actually scanned.
 func sqlOffsetInComment(comment string) int {
-	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
-	offset := 0
-	for i := 0; i < len(comment); i++ {
-		if unicode.IsSpace(rune(comment[i])) {
-			offset = i
-			break
-		}
-	}
-	for offset < len(comment) {
+	offset := len("/*+")
+	for offset < len(comment) && unicode.IsSpace(rune(comment[offset])) {
 		offset++
-		if !unicode.IsSpace(rune(comment[offset])) {
-			break
-		}
 	}
 	return offset
 }

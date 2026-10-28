@@ -127,8 +127,9 @@ func (e *InsertValues) initInsertColumns() error {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
 				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 			}
+			// Keep the columns after it: each value is matched to the column at
+			// the same position in this list.
 			e.hasExtraHandle = true
-			break
 		}
 	}
 
@@ -384,8 +385,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
-	row := make([]types.Datum, len(e.Table.Cols()))
-	hasValue := make([]bool, len(e.Table.Cols()))
+	rowLen := len(e.Table.Cols())
+	if e.hasExtraHandle {
+		// The _tidb_rowid value goes in the slot after the table's columns.
+		rowLen++
+	}
+	row := make([]types.Datum, rowLen)
+	hasValue := make([]bool, rowLen)
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
 		if e.handleErr(nil, &v, 0, err) != nil {

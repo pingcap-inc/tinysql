@@ -531,6 +531,11 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
 		partialAggFunc := aggfuncs.Build(b.ctx, partialAggDesc, i)
 		finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
+		if partialAggFunc == nil || finalAggFunc == nil {
+			// aggfuncs implements int, real and string arguments only.
+			b.err = errors.Errorf("aggregate function %s over this type is not supported", aggDesc.Name)
+			return nil
+		}
 		e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
 		e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
 		if e.defaultVal != nil {

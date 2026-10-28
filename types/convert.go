@@ -45,7 +45,7 @@ func IntergerUnsignedUpperBound(intType byte) uint64 {
 		return mysql.MaxUint24
 	case mysql.TypeLong:
 		return math.MaxUint32
-	case mysql.TypeLonglong:
+	case mysql.TypeLonglong, mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet:
 		return math.MaxUint64
 	default:
 		panic("Input byte is not a mysql type")

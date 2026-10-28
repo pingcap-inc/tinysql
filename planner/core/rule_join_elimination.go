@@ -132,9 +132,15 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		if !path.Index.Unique {
 			continue
 		}
+		// IdxCols is only filled in the physical phase; this is a logical
+		// rule, so use FullIdxCols. An empty list proves nothing.
+		if len(path.FullIdxCols) == 0 {
+			continue
+		}
 		joinKeysContainIndex := true
-		for _, idxCol := range path.IdxCols {
-			if !joinKeys.Contains(idxCol) {
+		for _, idxCol := range path.FullIdxCols {
+			// A nil entry is an index column missing from the schema.
+			if idxCol == nil || !joinKeys.Contains(idxCol) {
 				joinKeysContainIndex = false
 				break
 			}
