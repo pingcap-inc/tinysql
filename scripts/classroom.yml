@@ -2,13 +2,23 @@ name: GitHub Classroom Workflow
 
 on: [push]
 
+# The autograding action reads the workflow run and updates its check run.
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
 jobs:
   build:
     name: Autograding
-    runs-on: [self-hosted,X64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v2
-      - uses: PingCAP-QE/setup-go@pingcap
+      # Actions are pinned to commit SHAs; the comments give the tag each SHA was taken from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: 1.16
-      - uses: you06/autograding@go
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.16'
+      - uses: you06/autograding@cd161632acc0ca2b1605522c466def5eb16a7439 # go
