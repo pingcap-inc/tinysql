@@ -631,6 +631,9 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 	chk := decoder.chk
 	flag := b[0]
 	b = b[1:]
+	if !flagFitsColumn(flag, ft) {
+		return nil, errors.Errorf("value flag %d does not match column type %s", flag, ft)
+	}
 	switch flag {
 	case intFlag:
 		var v int64
@@ -689,6 +692,25 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		return nil, errors.Trace(err)
 	}
 	return b, nil
+}
+
+// flagFitsColumn reports whether a value with the given flag can be appended
+// to a chunk column of type ft. The append functions write by the flag, so a
+// mismatched flag from the store would write past a fixed-length element or
+// corrupt a variable-length column's offsets.
+func flagFitsColumn(flag byte, ft *types.FieldType) bool {
+	switch flag {
+	case NilFlag:
+		return true
+	case intFlag, uintFlag, varintFlag, uvarintFlag:
+		return chunk.GetFixedLen(ft) == 8
+	case floatFlag:
+		return ft.Tp == mysql.TypeFloat || ft.Tp == mysql.TypeDouble
+	case bytesFlag, compactBytesFlag:
+		return chunk.GetFixedLen(ft) == -1
+	}
+	// DecodeOne refuses any other flag.
+	return true
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
