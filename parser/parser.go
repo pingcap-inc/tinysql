@@ -5778,7 +5778,11 @@ yystack:
 	/* put a state and value onto the stack */
 	yyp++
 	if yyp+1 >= len(yyS) {
-		nyys := make([]yySymType, len(yyS)*2)
+		if len(yyS) >= maxParserStack {
+			yylex.AppendError(errNestingTooDeep())
+			goto ret1
+		}
+		nyys := make([]yySymType, grownParserStack(len(yyS)))
 		copy(nyys, yyS)
 		yyS = nyys
 		parser.cache = yyS
@@ -5904,7 +5908,11 @@ yynewstate:
 
 	yyp -= n
 	if yyp+1 >= len(yyS) {
-		nyys := make([]yySymType, len(yyS)*2)
+		if len(yyS) >= maxParserStack {
+			yylex.AppendError(errNestingTooDeep())
+			goto ret1
+		}
+		nyys := make([]yySymType, grownParserStack(len(yyS)))
 		copy(nyys, yyS)
 		yyS = nyys
 		parser.cache = yyS
