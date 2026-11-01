@@ -552,6 +552,9 @@ func peek(b []byte) (length int, err error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	if len(b) < l {
+		return 0, errors.New("insufficient bytes to decode value")
+	}
 	length += l
 	return
 }
@@ -578,22 +581,23 @@ func peekBytes(b []byte) (int, error) {
 func peekCompactBytes(b []byte) (int, error) {
 	// Get length.
 	v, n := binary.Varint(b)
-	vi := int(v)
 	if n < 0 {
 		return 0, errors.New("value larger than 64 bits")
 	} else if n == 0 {
 		return 0, errors.New("insufficient bytes to decode value")
 	}
-	if len(b) < vi+n {
-		return 0, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	if v < 0 || v > int64(len(b)-n) {
+		return 0, errors.Errorf("invalid compact bytes length %d", v)
 	}
-	return n + vi, nil
+	return n + int(v), nil
 }
 
 func peekVarint(b []byte) (int, error) {
 	_, n := binary.Varint(b)
 	if n < 0 {
 		return 0, errors.New("value larger than 64 bits")
+	} else if n == 0 {
+		return 0, errors.New("insufficient bytes to decode value")
 	}
 	return n, nil
 }
@@ -602,6 +606,8 @@ func peekUvarint(b []byte) (int, error) {
 	_, n := binary.Uvarint(b)
 	if n < 0 {
 		return 0, errors.New("value larger than 64 bits")
+	} else if n == 0 {
+		return 0, errors.New("insufficient bytes to decode value")
 	}
 	return n, nil
 }

@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -72,4 +73,25 @@ func (s *testStoreBytesSuite) TestDecodeOneRejectsMismatchedFlag(c *C) {
 		_, err = decoder.DecodeOne(b, 0, ft)
 		c.Assert(err, IsNil)
 	}
+}
+
+func (s *testStoreBytesSuite) TestCutOneRejectsShortValues(c *C) {
+	for _, b := range [][]byte{
+		{intFlag, 1},
+		{uintFlag, 1, 2, 3, 4, 5, 6, 7},
+		{floatFlag},
+		{varintFlag},
+		{uvarintFlag},
+		{varintFlag, 0x80},
+		EncodeVarint([]byte{compactBytesFlag}, -5),
+		EncodeVarint([]byte{compactBytesFlag}, math.MaxInt64),
+		append(EncodeVarint([]byte{compactBytesFlag}, 4), "abc"...),
+	} {
+		_, _, err := CutOne(b)
+		c.Assert(err, NotNil, Commentf("%v", b))
+		_, _, err = DecodeOne(b)
+		c.Assert(err, NotNil, Commentf("%v", b))
+	}
+	_, _, err := CutOne([]byte{intFlag, 1, 2, 3, 4, 5, 6, 7, 8})
+	c.Assert(err, IsNil)
 }

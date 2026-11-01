@@ -107,6 +107,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 	var d types.Datum
 	switch byte(col.Tp) {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
+		if err := checkIntLen(colData); err != nil {
+			return d, err
+		}
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
 			d.SetUint64(decodeUint(colData))
 		} else {
@@ -128,6 +131,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeBit:
+		if err := checkIntLen(colData); err != nil {
+			return d, err
+		}
 		byteSize := (col.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	default:
@@ -200,6 +206,9 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
 	switch byte(col.Tp) {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
+		if err := checkIntLen(colData); err != nil {
+			return err
+		}
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
 			chk.AppendUint64(colIdx, decodeUint(colData))
 		} else {
@@ -221,6 +230,9 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		chk.AppendBytes(colIdx, colData)
 	case mysql.TypeBit:
+		if err := checkIntLen(colData); err != nil {
+			return err
+		}
 		byteSize := (col.Flen + 7) >> 3
 		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
 	default:
@@ -276,6 +288,11 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		idx, isNil, notFound := r.findColID(colID)
 		if !notFound && !isNil {
 			val := r.getData(idx)
+			if tp == IntFlag || tp == UintFlag {
+				if err := checkIntLen(val); err != nil {
+					return nil, err
+				}
+			}
 			values[offset] = decoder.encodeOldDatum(tp, val)
 			continue
 		}

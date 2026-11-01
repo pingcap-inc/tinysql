@@ -49,3 +49,16 @@ func (s *testCorruptStatsSuite) TestCalcFractionWithoutScalars(c *C) {
 	value := types.NewStringDatum("abc")
 	c.Assert(hg.calcFraction(0, &value), Equals, 0.5)
 }
+
+// ANALYZE builds these from the store's response, where any field can be
+// missing.
+func (s *testCorruptStatsSuite) TestMissingProtoFieldsAreEmpty(c *C) {
+	c.Assert(FMSketchFromProto(nil).NDV(), Equals, int64(0))
+	c.Assert(HistogramFromProto(nil).Len(), Equals, 0)
+	sc := SampleCollectorFromProto(nil)
+	c.Assert(sc.Count, Equals, int64(0))
+	merger := &SampleCollector{IsMerger: true, FMSketch: NewFMSketch(10), MaxSampleSize: 10}
+	merger.MergeSampleCollector(nil, SampleCollectorFromProto(&tipb.SampleCollector{Count: 1}))
+	merger.MergeSampleCollector(nil, &SampleCollector{Count: 1})
+	c.Assert(merger.Count, Equals, int64(2))
+}
