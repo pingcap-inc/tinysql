@@ -568,6 +568,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return err
 	}
 	cc.ctx.GetSessionVars().User = cc.user
+	// The host is recorded for the session's audit log lines.
+	host, _ := cc.PeerHost("")
+	cc.ctx.GetSessionVars().ConnectionInfo = &variable.ConnectionInfo{ConnectionID: cc.connectionID, User: cc.user, Host: host}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {

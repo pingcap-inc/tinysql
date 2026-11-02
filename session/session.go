@@ -324,6 +324,105 @@ func (s *session) String() string {
 	return string(b)
 }
 
+// auditAdminStatement writes one "audit" log line, whatever the log level
+// and general-log setting, for each statement a client runs that changes the
+// schema, statistics or server-wide settings: DDL, ANALYZE, ADMIN and SET
+// GLOBAL. Ordinary reads and writes are logged only with general-log, as in
+// MySQL. Refused statements are audited too. The server's own sessions are
+// not audited.
+func (s *session) auditAdminStatement(node ast.StmtNode, err error) {
+	vars := s.sessionVars
+	if vars.InRestrictedSQL || !isAdminStatement(node) {
+		return
+	}
+	var host string
+	if info := vars.ConnectionInfo; info != nil {
+		host = info.Host
+	}
+	outcome := "ok"
+	if err != nil {
+		msg := errorForLog(err)
+		outcome = "error: " + msg
+		// Masking also hides the error's code; keep that.
+		if te, ok := errors.Cause(err).(*terror.Error); ok {
+			outcome = fmt.Sprintf("error %d: %s", te.ToSQLError().Code, msg)
+		}
+	}
+	logutil.BgLogger().Warn("audit",
+		zap.Uint64("conn", vars.ConnectionID),
+		zap.String("user", vars.User),
+		zap.String("host", host),
+		zap.String("statement", stmtLabel(node)),
+		zap.Strings("objects", auditObjects(node, vars.CurrentDB)),
+		zap.String("sql", redact.SQL(strings.TrimSpace(node.Text()))),
+		zap.String("outcome", outcome))
+}
+
+// stmtLabel names a statement by its node type: CreateTable, AnalyzeTable,
+// Set, ...
+func stmtLabel(node ast.StmtNode) string {
+	return strings.TrimSuffix(strings.TrimPrefix(fmt.Sprintf("%T", node), "*ast."), "Stmt")
+}
+
+func isAdminStatement(node ast.StmtNode) bool {
+	switch x := node.(type) {
+	case ast.DDLNode, *ast.AnalyzeTableStmt, *ast.AdminStmt:
+		return true
+	case *ast.SetStmt:
+		for _, v := range x.Variables {
+			if v.IsGlobal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// auditObjects names the databases, tables and global variables a statement
+// acts on.
+func auditObjects(node ast.StmtNode, currentDB string) []string {
+	switch x := node.(type) {
+	case *ast.CreateDatabaseStmt:
+		return []string{x.Name}
+	case *ast.DropDatabaseStmt:
+		return []string{x.Name}
+	case *ast.SetStmt:
+		var names []string
+		for _, v := range x.Variables {
+			if v.IsGlobal {
+				names = append(names, "@@global."+v.Name)
+			}
+		}
+		return names
+	}
+	var c auditTableCollector
+	node.Accept(&c)
+	names := make([]string, 0, len(c.tables))
+	for _, tn := range c.tables {
+		schema := tn.Schema.O
+		if schema == "" {
+			schema = currentDB
+		}
+		names = append(names, schema+"."+tn.Name.O)
+	}
+	return names
+}
+
+type auditTableCollector struct {
+	tables []*ast.TableName
+}
+
+func (c *auditTableCollector) Enter(n ast.Node) (ast.Node, bool) {
+	if tn, ok := n.(*ast.TableName); ok {
+		c.tables = append(c.tables, tn)
+	}
+	return n, false
+}
+
+func (c *auditTableCollector) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
 // errorForLog returns err's message for the log, with literals masked when
 // redaction is on. Errors can carry data: a failed COMMIT names the previous
 // statement, and a write conflict prints the conflicting key's values
@@ -576,6 +675,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
 	recordSet, err := runStmt(ctx, s, stmt)
+	s.auditAdminStatement(stmtNode, err)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -648,6 +748,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
+			s.auditAdminStatement(stmtNode, err)
 			closeRecordSets(recordSets)
 			s.rollbackOnError(ctx)
 			logutil.Logger(ctx).Warn("compile SQL failed",
