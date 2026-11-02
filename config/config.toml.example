@@ -22,7 +22,10 @@ path = "tinysql-data"
 lease = "45s"
 
 # Maximum number of concurrent client connections, including ones still logging
-# in. 0 means unlimited.
+# in. 0 means unlimited. At most three quarters of them may be still logging in;
+# when those are all taken, the oldest is closed for a new one. A remote host may
+# have at most 8 connections logging in at once. After 5 failed logins in a row
+# from one address, each further failure waits 1, 2, 4, then 8 seconds.
 max-server-connections = 151
 
 [log]

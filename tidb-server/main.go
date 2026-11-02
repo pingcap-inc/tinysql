@@ -303,6 +303,10 @@ func setupLog() {
 	terror.MustNil(err)
 }
 
+// minRecommendedPasswordLen is the length below which a chosen root password
+// gets a warning. It isn't enforced: learners often pick short local ones.
+const minRecommendedPasswordLen = 12
+
 // setupRootPassword sets the root account's password hash from
 // TINYSQL_ROOT_PASSWORD or, for an on-disk mocktikv store, from a password file
 // generated in the data directory on first start.
@@ -313,6 +317,10 @@ func setupRootPassword() {
 		log.Fatal(envRootPassword + " is set but empty")
 	case ok:
 		log.Info("root password taken from " + envRootPassword)
+		if len(password) < minRecommendedPasswordLen {
+			log.Warn(envRootPassword + " is shorter than " + strconv.Itoa(minRecommendedPasswordLen) +
+				" characters; failed logins are slowed down, but a short password can still be guessed")
+		}
 		// The store's data files are as sensitive as the password file.
 		if cfg.Store == "mocktikv" && cfg.Path != "" && runtime.GOOS != "windows" {
 			if err := server.CheckPrivateDataDir(cfg.Path); err != nil {

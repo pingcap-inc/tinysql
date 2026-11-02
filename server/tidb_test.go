@@ -81,6 +81,9 @@ func (ts *TidbTestSuite) TestIssues(c *C) {
 	runTestIssue3662(c)
 }
 
+// TestAuthentication fails 3 logins from 127.0.0.1 against the suite's server;
+// failures after the 5th in a row from one address are delayed (host_tracker.go),
+// so tests sharing this server should stay under that.
 func (ts *TidbTestSuite) TestAuthentication(c *C) {
 	c.Parallel()
 	for _, overrider := range []configOverrider{

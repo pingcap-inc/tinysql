@@ -29,6 +29,7 @@
 package server
 
 import (
+	"container/list"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -71,6 +72,9 @@ const (
 	// preAuthMaxPacketSize caps packets read before the client has logged in. It
 	// leaves room for libmysqlclient's 64 KiB of connection attributes.
 	preAuthMaxPacketSize = 128 * 1024
+	// preAuthEvictAge: when every handshake slot is taken, the oldest
+	// handshake is closed for a new one, if it has had at least this long.
+	preAuthEvictAge = time.Second
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -105,6 +109,12 @@ type Server struct {
 
 	// requireTLS refuses clients that don't upgrade to TLS.
 	requireTLS bool
+
+	// hosts tracks failed logins and handshakes per client address.
+	hosts *hostTracker
+	// preAuth lists the connections still in the handshake, oldest first.
+	preAuthMu sync.Mutex
+	preAuth   *list.List
 }
 
 // ConnectionCount gets current connection count.
@@ -132,6 +142,10 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc.setConn(conn)
 	cc.pkt.setMaxPacketSize(preAuthMaxPacketSize)
 	cc.salt = util.RandomBuf(20)
+	cc.remoteHost = hostOf(conn.RemoteAddr())
+	cc.acceptedAt = time.Now()
+	cc.rawConn = conn
+	cc.evicted = make(chan struct{})
 	return cc
 }
 
@@ -142,6 +156,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:         driver,
 		clients:        make(map[uint32]*clientConn),
 		stopListenerCh: make(chan struct{}, 1),
+		hosts:          newHostTracker(),
+		preAuth:        list.New(),
 	}
 
 	if err := cfg.Valid(); err != nil {
@@ -251,7 +267,18 @@ func (s *Server) Run() error {
 
 		clientConn := s.newConn(conn)
 		if !s.acquireConnSlot() {
-			s.rejectTooManyConnections(clientConn)
+			s.rejectTooManyConnections(clientConn, "too many connections")
+			continue
+		}
+		if !s.hosts.beginHandshake(clientConn.remoteHost) {
+			atomic.AddInt32(&s.connCount, -1)
+			s.rejectTooManyConnections(clientConn, "too many handshakes from this host")
+			continue
+		}
+		if !s.admitPreAuth(clientConn) {
+			s.hosts.endHandshake(clientConn.remoteHost)
+			atomic.AddInt32(&s.connCount, -1)
+			s.rejectTooManyConnections(clientConn, "too many handshakes")
 			continue
 		}
 
@@ -309,8 +336,60 @@ func (s *Server) acquireConnSlot() bool {
 	return true
 }
 
-func (s *Server) rejectTooManyConnections(cc *clientConn) {
-	logutil.BgLogger().Warn("too many connections, rejecting",
+// preAuthLimit is how many connections may be in the handshake at once: three
+// quarters of max-server-connections, so connections that never log in can't
+// take every slot from logged-in sessions. 0 means no limit.
+func (s *Server) preAuthLimit() int {
+	limit := int(s.cfg.MaxServerConnections)
+	if limit <= 0 {
+		return 0
+	}
+	if n := limit - limit/4; n > 0 {
+		return n
+	}
+	return 1
+}
+
+// admitPreAuth adds cc to the connections in the handshake. When they are at
+// preAuthLimit it closes the oldest to make room, so idle connections can't
+// lock out a client that logs in promptly, or refuses cc if even the oldest is
+// younger than preAuthEvictAge.
+func (s *Server) admitPreAuth(cc *clientConn) bool {
+	s.preAuthMu.Lock()
+	defer s.preAuthMu.Unlock()
+	if limit := s.preAuthLimit(); limit > 0 && s.preAuth.Len() >= limit {
+		front := s.preAuth.Front()
+		oldest := front.Value.(*clientConn)
+		if time.Since(oldest.acceptedAt) < preAuthEvictAge {
+			return false
+		}
+		s.preAuth.Remove(front)
+		oldest.preAuthElem = nil
+		close(oldest.evicted)
+		// rawConn, not bufReadConn: the connection's own goroutine may be
+		// replacing bufReadConn with a TLS layer right now.
+		logutil.BgLogger().Info("closing the oldest unauthenticated connection to admit a new one",
+			zap.Uint32("conn", oldest.connectionID), zap.String("remoteAddr", oldest.rawConn.RemoteAddr().String()))
+		terror.Log(oldest.rawConn.Close())
+	}
+	cc.preAuthElem = s.preAuth.PushBack(cc)
+	return true
+}
+
+// leavePreAuth undoes admitPreAuth and beginHandshake once cc's handshake
+// ends, however it ends.
+func (s *Server) leavePreAuth(cc *clientConn) {
+	s.preAuthMu.Lock()
+	if cc.preAuthElem != nil {
+		s.preAuth.Remove(cc.preAuthElem)
+		cc.preAuthElem = nil
+	}
+	s.preAuthMu.Unlock()
+	s.hosts.endHandshake(cc.remoteHost)
+}
+
+func (s *Server) rejectTooManyConnections(cc *clientConn, reason string) {
+	logutil.BgLogger().Warn("rejecting a connection: "+reason,
 		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()), zap.Uint32("limit", s.cfg.MaxServerConnections))
 	terror.Log(cc.bufReadConn.SetDeadline(time.Now().Add(time.Second)))
 	terror.Log(cc.writeError(errConCount))
@@ -322,6 +401,12 @@ func (s *Server) rejectTooManyConnections(cc *clientConn) {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	defer atomic.AddInt32(&s.connCount, -1)
+	inHandshake := true
+	defer func() {
+		if inHandshake {
+			s.leavePreAuth(conn)
+		}
+	}()
 	defer func() {
 		// clientConn.Run recovers its own panics; this covers the handshake.
 		if r := recover(); r != nil {
@@ -331,7 +416,10 @@ func (s *Server) onConn(conn *clientConn) {
 	}()
 
 	terror.Log(conn.bufReadConn.SetDeadline(time.Now().Add(handshakeTimeout)))
-	if err := conn.handshake(ctx); err != nil {
+	err := conn.handshake(ctx)
+	inHandshake = false
+	s.leavePreAuth(conn)
+	if err != nil {
 		logutil.Logger(ctx).Info("handshake failed",
 			zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()), zap.String("user", conn.user), zap.Error(err))
 		err = conn.Close()
