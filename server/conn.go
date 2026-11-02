@@ -497,6 +497,15 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
+	// Checked before authentication, so a plaintext client learns nothing
+	// about the password.
+	if cc.server.requireTLS && cc.tlsConn == nil {
+		logutil.BgLogger().Warn("refused a client without TLS",
+			zap.Uint32("conn", cc.connectionID), zap.String("user", cc.user),
+			zap.String("addr", cc.bufReadConn.RemoteAddr().String()))
+		return errSecureTransport
+	}
+
 	if resp.Capability&mysql.ClientPluginAuth > 0 && resp.AuthPlugin != "" && resp.AuthPlugin != nativePasswordPlugin {
 		// The client answered with another plugin (for example MySQL 8's
 		// caching_sha2_password); ask it to answer with mysql_native_password.

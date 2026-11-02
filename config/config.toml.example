@@ -65,10 +65,18 @@ status-port = 10080
 enable-pprof = false
 
 [security]
-# TLS for MySQL clients: set ssl-cert and ssl-key (PEM files) to enable it.
-# ssl-ca optionally verifies client certificates.
+# TLS for MySQL clients: set ssl-cert and ssl-key (PEM files) to use your own
+# certificate. ssl-ca verifies client certificates that clients present.
 ssl-ca = ""
 ssl-cert = ""
 ssl-key = ""
+# With no ssl-cert/ssl-key and an on-disk mocktikv store, generate a self-signed
+# certificate in <path>/tls on first start, so clients can use TLS by default.
+auto-tls = true
+# Refuse clients that don't use TLS (error 3159).
+require-secure-transport = false
+# Refuse clients without a certificate signed by ssl-ca. Implies
+# require-secure-transport.
+require-client-cert = false
 # The root password is not set here. It is read from the TINYSQL_ROOT_PASSWORD
 # environment variable, or generated into <path>/root-password on first start.

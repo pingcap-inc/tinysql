@@ -61,6 +61,7 @@ var (
 	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 	errConCount          = terror.ClassServer.New(mysql.ErrConCount, mysql.MySQLErrName[mysql.ErrConCount])
 	errNetPacketTooLarge = terror.ClassServer.New(mysql.ErrNetPacketTooLarge, mysql.MySQLErrName[mysql.ErrNetPacketTooLarge])
+	errSecureTransport   = terror.ClassServer.New(mysql.ErrSecureTransportRequired, mysql.MySQLErrName[mysql.ErrSecureTransportRequired])
 )
 
 const (
@@ -77,7 +78,7 @@ const (
 const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
 
 // Server is the MySQL protocol server
@@ -101,6 +102,9 @@ type Server struct {
 	// connCount counts connections from accept until they close, including
 	// ones still in the handshake.
 	connCount int32
+
+	// requireTLS refuses clients that don't upgrade to TLS.
+	requireTLS bool
 }
 
 // ConnectionCount gets current connection count.
@@ -151,6 +155,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, err
 	}
 
+	s.requireTLS = cfg.Security.RequireSecureTransport || cfg.Security.RequireClientCert
+	if s.requireTLS && s.tlsConfig == nil {
+		return nil, errors.New("require-secure-transport and require-client-cert need TLS: set ssl-cert and ssl-key (auto-tls only covers an on-disk mocktikv store, not on Windows)")
+	}
+
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
@@ -174,6 +183,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 // loadTLSConfig returns the TLS config for MySQL clients, or nil when TLS is not
 // configured.
 func loadTLSConfig(sec *config.Security) (*tls.Config, error) {
+	if sec.RequireClientCert && sec.SSLCA == "" {
+		return nil, errors.New("require-client-cert needs ssl-ca to verify client certificates")
+	}
 	if sec.SSLCert == "" && sec.SSLKey == "" {
 		if sec.SSLCA != "" {
 			return nil, errors.New("ssl-ca is set but ssl-cert and ssl-key are not")
@@ -202,6 +214,9 @@ func loadTLSConfig(sec *config.Security) (*tls.Config, error) {
 		}
 		tlsConfig.ClientCAs = pool
 		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+		if sec.RequireClientCert {
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
 	}
 	logutil.BgLogger().Info("TLS is enabled for MySQL clients")
 	return tlsConfig, nil
@@ -432,6 +447,8 @@ func init() {
 		mysql.ErrInvalidType:       mysql.ErrInvalidType,
 		mysql.ErrConCount:          mysql.ErrConCount,
 		mysql.ErrNetPacketTooLarge: mysql.ErrNetPacketTooLarge,
+
+		mysql.ErrSecureTransportRequired: mysql.ErrSecureTransportRequired,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }
