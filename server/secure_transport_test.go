@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -80,6 +81,10 @@ func (s *testSecureTransportSuite) SetUpSuite(c *C) {
 		cfg.Security.RootPasswordHash = NativePasswordHash(testRootPassword)
 		cfg.Security.SSLCert, cfg.Security.SSLKey = serverCert, serverKey
 		cfg.Security.RequireSecureTransport = !sc.withCert
+		if !sc.withCert {
+			cfg.Status.ReportStatus = true
+			cfg.Status.StatusPort = 10111
+		}
 		if sc.withCert {
 			cfg.Security.SSLCA = caFile
 			cfg.Security.RequireClientCert = true
@@ -226,6 +231,25 @@ func (s *testSecureTransportSuite) TestTLSSettingsAreValidated(c *C) {
 	c.Assert(err, ErrorMatches, ".*needs ssl-ca.*")
 }
 
+// The status server uses the SQL port's TLS.
+func (s *testSecureTransportSuite) TestStatusServerUsesTLS(c *C) {
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: s.caPool, ServerName: "localhost"}}}
+	req, err := http.NewRequest("GET", "https://127.0.0.1:10111/", nil)
+	c.Assert(err, IsNil)
+	req.SetBasicAuth("root", testRootPassword)
+	resp, err := client.Do(req)
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// Plain HTTP gets no answer.
+	resp, err = http.Get("http://127.0.0.1:10111/")
+	if err == nil {
+		resp.Body.Close()
+		c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	}
+}
+
 func (s *testSecureTransportSuite) TestLocalFilesIsNotAdvertised(c *C) {
 	for _, srv := range s.servers {
 		c.Assert(srv.capability&tmysql.ClientLocalFiles, Equals, uint32(0))
@@ -234,6 +258,12 @@ func (s *testSecureTransportSuite) TestLocalFilesIsNotAdvertised(c *C) {
 
 func (s *testSecureTransportSuite) TestAutoTLSCert(c *C) {
 	dir := c.MkDir()
+	if runtime.GOOS == "windows" {
+		// The key file's readers can't be checked there, so it is refused.
+		_, _, _, err := LoadOrCreateTLSCert(dir)
+		c.Assert(err, NotNil)
+		return
+	}
 	certFile, keyFile, fp, err := LoadOrCreateTLSCert(dir)
 	c.Assert(err, IsNil)
 	c.Assert(fp, HasLen, 64)
@@ -252,9 +282,6 @@ func (s *testSecureTransportSuite) TestAutoTLSCert(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(fp2, Equals, fp)
 
-	if runtime.GOOS == "windows" {
-		return
-	}
 	fi, err := os.Stat(keyFile)
 	c.Assert(err, IsNil)
 	c.Assert(fi.Mode().Perm(), Equals, os.FileMode(0600))

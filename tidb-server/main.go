@@ -91,7 +91,7 @@ var (
 	reportStatus = flagBoolean(nmReportStatus, false, "If enable status report HTTP service.")
 	statusHost   = flag.String(nmStatusHost, "127.0.0.1", "tidb server status host (use 0.0.0.0 to listen on all interfaces)")
 	statusPort   = flag.String(nmStatusPort, "10080", "tidb server status port")
-	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes heap dumps; local debugging only)")
+	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes goroutine stacks and process arguments; local debugging only)")
 )
 
 var (
@@ -303,6 +303,10 @@ func setupLog() {
 	terror.MustNil(err)
 }
 
+// minRecommendedPasswordLen is the length below which a chosen root password
+// gets a warning. It isn't enforced: learners often pick short local ones.
+const minRecommendedPasswordLen = 12
+
 // setupRootPassword sets the root account's password hash from
 // TINYSQL_ROOT_PASSWORD or, for an on-disk mocktikv store, from a password file
 // generated in the data directory on first start.
@@ -313,8 +317,20 @@ func setupRootPassword() {
 		log.Fatal(envRootPassword + " is set but empty")
 	case ok:
 		log.Info("root password taken from " + envRootPassword)
+		if len(password) < minRecommendedPasswordLen {
+			log.Warn(envRootPassword + " is shorter than " + strconv.Itoa(minRecommendedPasswordLen) +
+				" characters; failed logins are slowed down, but a short password can still be guessed")
+		}
+		// The store's data files are as sensitive as the password file.
+		if cfg.Store == "mocktikv" && cfg.Path != "" && runtime.GOOS != "windows" {
+			if err := server.CheckPrivateDataDir(cfg.Path); err != nil {
+				log.Fatal("the data directory is not private", zap.Error(err))
+			}
+		}
 	case cfg.Store != "mocktikv" || cfg.Path == "":
 		log.Fatal("set " + envRootPassword + " to choose the root password (required unless the store is an on-disk mocktikv)")
+	case runtime.GOOS == "windows":
+		log.Fatal("set " + envRootPassword + " to choose the root password: a generated password file can't be kept private on Windows")
 	default:
 		var file string
 		var err error

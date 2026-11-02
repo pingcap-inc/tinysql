@@ -36,6 +36,7 @@ package server
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -104,6 +105,11 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+	remoteHost   string            // client IP, for per-host login accounting.
+	acceptedAt   time.Time         // when the connection was accepted.
+	preAuthElem  *list.Element     // this connection in Server.preAuth, while in the handshake.
+	rawConn      net.Conn          // the accepted connection, under any TLS layer.
+	evicted      chan struct{}     // closed when admitPreAuth closes this connection for a newer one.
 }
 
 func (cc *clientConn) String() string {
@@ -561,10 +567,23 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		if err != nil {
 			return err
 		}
+		// Slow down guessing: after a run of failures from one address, each
+		// further failure waits before the client hears about it.
+		delay := cc.server.hosts.loginFailed(cc.remoteHost)
 		logutil.BgLogger().Warn("authentication failed",
-			zap.Uint32("conn", cc.connectionID), zap.String("user", cc.user), zap.String("host", host))
+			zap.Uint32("conn", cc.connectionID), zap.String("user", cc.user), zap.String("host", host),
+			zap.Duration("delay", delay))
+		// The wait ends early if the connection is closed for a newer one, so
+		// delayed failures can't hold every connection slot.
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-cc.evicted:
+			timer.Stop()
+		}
 		return errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword)
 	}
+	cc.server.hosts.loginSucceeded(cc.remoteHost)
 
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {

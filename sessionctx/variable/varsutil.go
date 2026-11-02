@@ -244,7 +244,30 @@ const (
 	maxChunkSizeUpperBound = 1 << 20
 	// maxConcurrency is the upper bound of the operator concurrency variables.
 	maxConcurrency = 256
+	// maxIndexLookupSize bounds tidb_index_lookup_size, the handles buffered
+	// per index lookup task.
+	maxIndexLookupSize = 1 << 20
+	// maxBackoffLockFast bounds tidb_backoff_lock_fast, the base sleep in ms
+	// when a read meets a lock.
+	maxBackoffLockFast = 10000
+	// maxBackOffWeight bounds tidb_backoff_weight, which multiplies every
+	// backoff's total sleep budget; at 10 a statement can still retry for
+	// minutes before it fails.
+	maxBackOffWeight = 10
 )
+
+// upperBoundOf returns the cap of a variable clamped to an upper bound, or 0.
+func upperBoundOf(name string) int {
+	switch name {
+	case TiDBIndexLookupSize:
+		return maxIndexLookupSize
+	case TiDBBackoffLockFast:
+		return maxBackoffLockFast
+	case TiDBBackOffWeight:
+		return maxBackOffWeight
+	}
+	return 0
+}
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
@@ -438,6 +461,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		if v <= 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		if limit := upperBoundOf(name); v > limit {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
+			return strconv.Itoa(limit), nil
 		}
 		return value, nil
 	case TiDBOptCorrelationExpFactor:

@@ -45,3 +45,30 @@ func (s *testVarsutilSuite) TestResourceVariableBounds(c *C) {
 	_, err = ValidateSetSystemVar(v, TiDBMaxChunkSize, strconv.Itoa(maxChunkSizeUpperBound))
 	c.Assert(err, IsNil)
 }
+
+// The index-lookup batch and the backoff variables are capped too, on SET and
+// when a stored global value is applied to a session.
+func (s *testVarsutilSuite) TestLookupAndBackoffVariableBounds(c *C) {
+	v := NewSessionVars()
+	for _, ca := range []struct {
+		name  string
+		limit int
+		get   func() int
+	}{
+		{TiDBIndexLookupSize, maxIndexLookupSize, func() int { return v.IndexLookupSize }},
+		{TiDBBackoffLockFast, maxBackoffLockFast, func() int { return v.KVVars.BackoffLockFast }},
+		{TiDBBackOffWeight, maxBackOffWeight, func() int { return v.KVVars.BackOffWeight }},
+	} {
+		val, err := ValidateSetSystemVar(v, ca.name, "2000000000")
+		c.Assert(err, IsNil, Commentf("%s", ca.name))
+		c.Assert(val, Equals, strconv.Itoa(ca.limit), Commentf("%s", ca.name))
+		val, err = ValidateSetSystemVar(v, ca.name, strconv.Itoa(ca.limit))
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, strconv.Itoa(ca.limit))
+		_, err = ValidateSetSystemVar(v, ca.name, "0")
+		c.Assert(err, NotNil, Commentf("%s", ca.name))
+
+		c.Assert(v.SetSystemVar(ca.name, "2000000000"), IsNil)
+		c.Assert(ca.get(), Equals, ca.limit, Commentf("%s", ca.name))
+	}
+}

@@ -61,6 +61,12 @@ func (s *testAuthSuite) TestRandomBufIsSaltSafe(c *C) {
 
 func (s *testAuthSuite) TestLoadOrCreateRootPassword(c *C) {
 	dir := filepath.Join(c.MkDir(), "data")
+	if runtime.GOOS == "windows" {
+		// The file's readers can't be checked there, so it is refused.
+		_, _, err := LoadOrCreateRootPassword(dir)
+		c.Assert(err, NotNil)
+		return
+	}
 	pw, file, err := LoadOrCreateRootPassword(dir)
 	c.Assert(err, IsNil)
 	c.Assert(len(pw), Equals, generatedPasswordLen)
@@ -71,9 +77,6 @@ func (s *testAuthSuite) TestLoadOrCreateRootPassword(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pw2, Equals, pw)
 
-	if runtime.GOOS == "windows" {
-		return
-	}
 	fi, err := os.Stat(file)
 	c.Assert(err, IsNil)
 	c.Assert(fi.Mode().Perm(), Equals, os.FileMode(0600))
@@ -99,4 +102,24 @@ func (s *testAuthSuite) TestLoadOrCreateRootPassword(c *C) {
 	c.Assert(os.Chmod(dir, 0770), IsNil)
 	_, _, err = LoadOrCreateRootPassword(dir)
 	c.Assert(err, NotNil)
+}
+
+// tidb-server checks the data directory even when the password comes from
+// TINYSQL_ROOT_PASSWORD.
+func (s *testAuthSuite) TestCheckPrivateDataDir(c *C) {
+	dir := c.MkDir()
+	if runtime.GOOS == "windows" {
+		c.Assert(CheckPrivateDataDir(dir), NotNil)
+		return
+	}
+	c.Assert(os.Chmod(dir, 0700), IsNil)
+	c.Assert(CheckPrivateDataDir(dir), IsNil)
+	c.Assert(os.Chmod(dir, 0770), IsNil)
+	c.Assert(CheckPrivateDataDir(dir), ErrorMatches, ".*chmod 700.*")
+	c.Assert(os.Chmod(dir, 0755), IsNil)
+	c.Assert(CheckPrivateDataDir(dir), IsNil)
+	c.Assert(os.Chmod(dir, 0700), IsNil)
+	file := filepath.Join(dir, "f")
+	c.Assert(os.WriteFile(file, nil, 0600), IsNil)
+	c.Assert(CheckPrivateDataDir(file), ErrorMatches, ".*not a directory.*")
 }
