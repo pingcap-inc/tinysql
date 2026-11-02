@@ -18,8 +18,10 @@ package server
 
 import "os"
 
-// isPrivate always succeeds on Windows, which has no POSIX owner or mode bits;
-// access there is governed by the ACLs of the user's profile directory.
+// isPrivate always fails on Windows: it has no POSIX owner or mode bits, and
+// the file's ACL isn't checked, so who else can read it is unknown. The
+// generated root-password file and auto-TLS key are therefore not used there;
+// set TINYSQL_ROOT_PASSWORD and ssl-cert/ssl-key instead.
 func isPrivate(fi os.FileInfo, forbidden os.FileMode) bool {
-	return true
+	return false
 }

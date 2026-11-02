@@ -234,6 +234,12 @@ func (s *testSecureTransportSuite) TestLocalFilesIsNotAdvertised(c *C) {
 
 func (s *testSecureTransportSuite) TestAutoTLSCert(c *C) {
 	dir := c.MkDir()
+	if runtime.GOOS == "windows" {
+		// The key file's readers can't be checked there, so it is refused.
+		_, _, _, err := LoadOrCreateTLSCert(dir)
+		c.Assert(err, NotNil)
+		return
+	}
 	certFile, keyFile, fp, err := LoadOrCreateTLSCert(dir)
 	c.Assert(err, IsNil)
 	c.Assert(fp, HasLen, 64)
@@ -252,9 +258,6 @@ func (s *testSecureTransportSuite) TestAutoTLSCert(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(fp2, Equals, fp)
 
-	if runtime.GOOS == "windows" {
-		return
-	}
 	fi, err := os.Stat(keyFile)
 	c.Assert(err, IsNil)
 	c.Assert(fi.Mode().Perm(), Equals, os.FileMode(0600))

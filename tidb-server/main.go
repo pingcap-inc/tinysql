@@ -313,8 +313,16 @@ func setupRootPassword() {
 		log.Fatal(envRootPassword + " is set but empty")
 	case ok:
 		log.Info("root password taken from " + envRootPassword)
+		// The store's data files are as sensitive as the password file.
+		if cfg.Store == "mocktikv" && cfg.Path != "" && runtime.GOOS != "windows" {
+			if err := server.CheckPrivateDataDir(cfg.Path); err != nil {
+				log.Fatal("the data directory is not private", zap.Error(err))
+			}
+		}
 	case cfg.Store != "mocktikv" || cfg.Path == "":
 		log.Fatal("set " + envRootPassword + " to choose the root password (required unless the store is an on-disk mocktikv)")
+	case runtime.GOOS == "windows":
+		log.Fatal("set " + envRootPassword + " to choose the root password: a generated password file can't be kept private on Windows")
 	default:
 		var file string
 		var err error
