@@ -99,11 +99,19 @@ type Status struct {
 
 // Security is the security section of the config.
 type Security struct {
-	// SSLCA, SSLCert and SSLKey enable TLS for MySQL clients. Leave SSLCert and
-	// SSLKey empty to disable TLS. SSLCA optionally verifies client certificates.
+	// SSLCA, SSLCert and SSLKey enable TLS for MySQL clients. SSLCA verifies
+	// client certificates that are presented, as in MySQL.
 	SSLCA   string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey  string `toml:"ssl-key" json:"ssl-key"`
+	// AutoTLS generates a self-signed certificate in the data directory when
+	// SSLCert and SSLKey are not set (on-disk mocktikv store only).
+	AutoTLS bool `toml:"auto-tls" json:"auto-tls"`
+	// RequireSecureTransport refuses clients that don't use TLS.
+	RequireSecureTransport bool `toml:"require-secure-transport" json:"require-secure-transport"`
+	// RequireClientCert refuses clients without a certificate signed by SSLCA.
+	// It implies RequireSecureTransport.
+	RequireClientCert bool `toml:"require-client-cert" json:"require-client-cert"`
 
 	// RootPasswordHash is SHA1(SHA1(password)) of the root account, as used by
 	// mysql_native_password. It is set at startup (see tidb-server) and is never
@@ -134,6 +142,9 @@ var defaultConf = Config{
 		StatusHost:   "127.0.0.1",
 		StatusPort:   10080,
 		EnablePProf:  false,
+	},
+	Security: Security{
+		AutoTLS: true,
 	},
 }
 

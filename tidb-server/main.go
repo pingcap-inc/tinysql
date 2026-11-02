@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -115,6 +116,7 @@ func main() {
 		log.Warn(configWarning)
 	}
 	setupRootPassword()
+	setupTLS()
 	createStoreAndDomain()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
@@ -324,6 +326,46 @@ func setupRootPassword() {
 			zap.String("file", file))
 	}
 	cfg.Security.RootPasswordHash = server.NativePasswordHash(password)
+}
+
+// setupTLS generates a self-signed certificate for MySQL clients when none is
+// configured and the store is an on-disk mocktikv, then publishes the TLS
+// settings as system variables.
+func setupTLS() {
+	sec := &cfg.Security
+	switch {
+	case sec.SSLCert != "" || sec.SSLKey != "":
+	case !sec.AutoTLS:
+	case cfg.Store != "mocktikv" || cfg.Path == "":
+		log.Info("TLS for MySQL clients is off: auto-tls needs an on-disk mocktikv store; set ssl-cert and ssl-key")
+	case runtime.GOOS == "windows":
+		// The private-key file can't be checked for other readers there.
+		log.Info("TLS for MySQL clients is off: auto-tls is not supported on Windows; set ssl-cert and ssl-key")
+	default:
+		certFile, keyFile, fingerprint, err := server.LoadOrCreateTLSCert(cfg.Path)
+		if err != nil {
+			log.Fatal("cannot set up the auto-generated TLS certificate (fix the permissions, or set auto-tls = false in the [security] section of the config file)", zap.Error(err))
+		}
+		sec.SSLCert, sec.SSLKey = certFile, keyFile
+		log.Info("TLS for MySQL clients uses a self-signed certificate",
+			zap.String("cert", certFile), zap.String("sha256", fingerprint))
+	}
+
+	tlsOn := sec.SSLCert != "" && sec.SSLKey != ""
+	haveSSL := "DISABLED"
+	if tlsOn {
+		haveSSL = "YES"
+	}
+	requireTLS := "OFF"
+	if sec.RequireSecureTransport || sec.RequireClientCert {
+		requireTLS = "ON"
+	}
+	variable.SysVars["have_ssl"].Value = haveSSL
+	variable.SysVars["have_openssl"].Value = haveSSL
+	variable.SysVars["ssl_ca"].Value = sec.SSLCA
+	variable.SysVars["ssl_cert"].Value = sec.SSLCert
+	variable.SysVars["ssl_key"].Value = sec.SSLKey
+	variable.SysVars[variable.RequireSecureTransport].Value = requireTLS
 }
 
 func createServer() {
