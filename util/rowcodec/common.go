@@ -26,6 +26,18 @@ const CodecVer = 128
 
 var errInvalidCodecVer = errors.New("invalid codec version")
 
+var errInvalidRowData = errors.New("invalid row data")
+
+// checkIntLen checks the length of an integer encoded by encodeInt or
+// encodeUint, which use 1, 2, 4 or 8 bytes.
+func checkIntLen(val []byte) error {
+	switch len(val) {
+	case 1, 2, 4, 8:
+		return nil
+	}
+	return errors.Errorf("invalid encoded integer length %d", len(val))
+}
+
 // First byte in the encoded value which specifies the encoding type.
 const (
 	NilFlag          byte = 0

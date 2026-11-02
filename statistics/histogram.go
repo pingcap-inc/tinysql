@@ -396,6 +396,9 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // Note that we will set BytesDatum for the lower/upper bound in the bucket, the decode will
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
+	if protoHg == nil {
+		protoHg = &tipb.Histogram{}
+	}
 	tp := types.NewFieldType(mysql.TypeBlob)
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {

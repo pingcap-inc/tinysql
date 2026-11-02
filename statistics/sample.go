@@ -121,6 +121,9 @@ const maxSampleValueLength = mysql.MaxFieldVarCharLength / 2
 
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
+	if collector == nil {
+		collector = &tipb.SampleCollector{}
+	}
 	s := &SampleCollector{
 		NullCount: collector.NullCount,
 		Count:     collector.Count,

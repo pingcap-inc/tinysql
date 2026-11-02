@@ -289,6 +289,13 @@ func (n *Constraint) Accept(v Visitor) (Node, bool) {
 		}
 		n.Option = node.(*IndexOption)
 	}
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 

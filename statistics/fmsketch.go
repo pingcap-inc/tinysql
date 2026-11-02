@@ -88,6 +88,9 @@ func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize i
 }
 
 func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
+	if rs == nil {
+		return
+	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
 		for key := range s.hashset {
@@ -113,6 +116,9 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 
 // FMSketchFromProto converts FMSketch from its protobuf representation.
 func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
+	if protoSketch == nil {
+		return &FMSketch{hashset: make(map[uint64]bool)}
+	}
 	sketch := &FMSketch{
 		hashset: make(map[uint64]bool),
 		mask:    protoSketch.Mask,

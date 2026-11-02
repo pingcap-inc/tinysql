@@ -430,6 +430,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 				return nil, nil, err
 			}
 		}
+		if len(resp.Collectors) > len(collectors) {
+			return nil, nil, errors.Errorf("analyze response has %d column collectors, expected at most %d", len(resp.Collectors), len(collectors))
+		}
 		for i, rc := range resp.Collectors {
 			respSample := statistics.SampleCollectorFromProto(rc)
 			collectors[i].MergeSampleCollector(sc, respSample)

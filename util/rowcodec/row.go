@@ -51,6 +51,9 @@ func (r *row) getData(i int) []byte {
 }
 
 func (r *row) fromBytes(rowData []byte) error {
+	if len(rowData) < 6 {
+		return errInvalidRowData
+	}
 	if rowData[0] != CodecVer {
 		return errInvalidCodecVer
 	}
@@ -59,14 +62,20 @@ func (r *row) fromBytes(rowData []byte) error {
 	r.numNullCols = binary.LittleEndian.Uint16(rowData[4:])
 	cursor := 6
 	if r.large {
-		colIDsLen := int(r.numNotNullCols+r.numNullCols) * 4
+		colIDsLen := (int(r.numNotNullCols) + int(r.numNullCols)) * 4
+		if len(rowData) < cursor+colIDsLen+int(r.numNotNullCols)*4 {
+			return errInvalidRowData
+		}
 		r.colIDs32 = bytesToU32Slice(rowData[cursor : cursor+colIDsLen])
 		cursor += colIDsLen
 		offsetsLen := int(r.numNotNullCols) * 4
 		r.offsets32 = bytesToU32Slice(rowData[cursor : cursor+offsetsLen])
 		cursor += offsetsLen
 	} else {
-		colIDsLen := int(r.numNotNullCols + r.numNullCols)
+		colIDsLen := int(r.numNotNullCols) + int(r.numNullCols)
+		if len(rowData) < cursor+colIDsLen+int(r.numNotNullCols)*2 {
+			return errInvalidRowData
+		}
 		r.colIDs = rowData[cursor : cursor+colIDsLen]
 		cursor += colIDsLen
 		offsetsLen := int(r.numNotNullCols) * 2
@@ -74,6 +83,25 @@ func (r *row) fromBytes(rowData []byte) error {
 		cursor += offsetsLen
 	}
 	r.data = rowData[cursor:]
+	return r.checkOffsets()
+}
+
+// checkOffsets checks that the value offsets ascend and stay within the
+// data, so getData can slice without checking.
+func (r *row) checkOffsets() error {
+	var prev uint32
+	for i := 0; i < int(r.numNotNullCols); i++ {
+		var end uint32
+		if r.large {
+			end = r.offsets32[i]
+		} else {
+			end = uint32(r.offsets[i])
+		}
+		if end < prev || int64(end) > int64(len(r.data)) {
+			return errInvalidRowData
+		}
+		prev = end
+	}
 	return nil
 }
 

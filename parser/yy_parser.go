@@ -115,7 +115,7 @@ func New() *Parser {
 	}
 
 	return &Parser{
-		cache: make([]yySymType, 200),
+		cache: make([]yySymType, initialParserStack),
 	}
 }
 
@@ -137,6 +137,15 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 	parser.lexer.reset(sql)
 	l = &parser.lexer
 	yyParse(l, parser)
+	// yyParse sets these before use; clear them so they don't keep the
+	// stack or the last statement's nodes alive.
+	parser.yyVAL = nil
+	parser.yylval = yySymType{}
+	if len(parser.cache) > initialParserStack {
+		// Don't keep a deep statement's stack, or the nodes it still points
+		// to, for the life of the session.
+		parser.cache = make([]yySymType, initialParserStack)
+	}
 
 	warns, errs := l.Errors()
 	if len(warns) > 0 {
@@ -153,7 +162,7 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 		var depth depthChecker
 		stmt.Accept(&depth)
 		if depth.tooDeep {
-			return nil, warns, ErrParse.GenWithStackByArgs("statement nesting is too deep:", "more than "+strconv.Itoa(MaxNestingDepth)+" levels")
+			return nil, warns, errNestingTooDeep()
 		}
 		ast.SetFlag(stmt)
 	}
@@ -163,6 +172,27 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 // MaxNestingDepth bounds how deeply the nodes of one statement may nest, for
 // example "select !!!...!1" or a chain of thousands of ORs.
 const MaxNestingDepth = 5000
+
+const (
+	initialParserStack = 200
+	// maxParserStack bounds the parser's state stack, so a deeply nested
+	// statement is refused while it is parsed, before the depth check runs.
+	// A statement within MaxNestingDepth can need several stack slots per
+	// level (about 6 for "substring(1, 1, ..."), hence the factor of 8.
+	maxParserStack = 8 * MaxNestingDepth
+)
+
+func errNestingTooDeep() error {
+	return ErrParse.GenWithStackByArgs("statement nesting is too deep:", "more than "+strconv.Itoa(MaxNestingDepth)+" levels")
+}
+
+// grownParserStack is the next size of a parser stack of size n.
+func grownParserStack(n int) int {
+	if n*2 > maxParserStack {
+		return maxParserStack
+	}
+	return n * 2
+}
 
 // depthChecker finds a statement nested deeper than MaxNestingDepth. It stops
 // descending at the limit, so checking is itself bounded.
