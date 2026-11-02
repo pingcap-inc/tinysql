@@ -46,6 +46,9 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
 		proj := a.convertAggToProj(agg)
+		if proj == nil {
+			return nil
+		}
 		proj.SetChildren(agg.children[0])
 		return proj
 	}
@@ -58,6 +61,10 @@ func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) 
 	}.Init(agg.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(agg.ctx, fun)
+		if expr == nil {
+			// The rewrite isn't possible for this type; keep the aggregation.
+			return nil
+		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
 	proj.SetSchema(agg.schema.Clone())
@@ -89,6 +96,9 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 			isNullExprs = append(isNullExprs, expression.Zero)
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+			if isNullExpr == nil {
+				return nil
+			}
 			isNullExprs = append(isNullExprs, isNullExpr)
 		}
 	}

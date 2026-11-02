@@ -92,6 +92,8 @@ func (s *testEngineFixesSuite) TestUnsupportedTypesFailCleanly(c *C) {
 	} {
 		c.Assert(queryErr(tk, sql), NotNil, Commentf("%s", sql))
 	}
+	// A DATE equi-join no longer panics building the not-null filter.
+	tk.MustQuery("select * from ef_date x, ef_date y where x.c = y.c").Check(testkit.Rows())
 
 	// An unsupported conversion stays an error in non-strict mode instead of
 	// becoming a warning and a stored zero.
