@@ -57,14 +57,17 @@ max-backups = 10
 # Start the status HTTP server. It has no authentication, so it is off by default.
 report-status = false
 
-# TiDB status host.
+# TiDB status host. Every status route needs HTTP Basic auth as root with the
+# root password. The status server uses the SQL port's TLS when TLS is on, and
+# refuses to start on a non-loopback host without it.
 status-host = "127.0.0.1"
 
 # TiDB status port. Must not be 0 when report-status is true.
 status-port = 10080
 
-# Serve Go pprof at http://${status-host}:${status-port}/debug/pprof. pprof
-# exposes heap dumps and process arguments; enable it only for local debugging.
+# Serve Go pprof at ${status-host}:${status-port}/debug/pprof. pprof exposes
+# goroutine stacks, the code's structure, the process arguments, and CPU and
+# trace profiles that load the server; enable it only for local debugging.
 enable-pprof = false
 
 [security]

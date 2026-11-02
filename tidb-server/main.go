@@ -91,7 +91,7 @@ var (
 	reportStatus = flagBoolean(nmReportStatus, false, "If enable status report HTTP service.")
 	statusHost   = flag.String(nmStatusHost, "127.0.0.1", "tidb server status host (use 0.0.0.0 to listen on all interfaces)")
 	statusPort   = flag.String(nmStatusPort, "10080", "tidb server status port")
-	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes heap dumps; local debugging only)")
+	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes goroutine stacks and process arguments; local debugging only)")
 )
 
 var (

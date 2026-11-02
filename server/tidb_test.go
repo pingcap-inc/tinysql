@@ -107,12 +107,41 @@ func (ts *TidbTestSuite) TestAuthentication(c *C) {
 	c.Assert(db.Ping(), IsNil)
 }
 
-func (ts *TidbTestSuite) TestStatusServerHasNoPProfByDefault(c *C) {
-	c.Parallel()
-	resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/cmdline")
+func statusGet(c *C, url, user, password string) *http.Response {
+	req, err := http.NewRequest("GET", url, nil)
+	c.Assert(err, IsNil)
+	if user != "" {
+		req.SetBasicAuth(user, password)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	c.Assert(err, IsNil)
 	resp.Body.Close()
+	return resp
+}
+
+func (ts *TidbTestSuite) TestStatusServerHasNoPProfByDefault(c *C) {
+	c.Parallel()
+	resp := statusGet(c, "http://127.0.0.1:10090/debug/pprof/cmdline", "root", testRootPassword)
 	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+}
+
+// Every status route needs the root password.
+func (ts *TidbTestSuite) TestStatusServerNeedsRootPassword(c *C) {
+	c.Parallel()
+	for _, path := range []string{"/", "/debug/pprof/cmdline"} {
+		resp := statusGet(c, "http://127.0.0.1:10090"+path, "", "")
+		c.Assert(resp.StatusCode, Equals, http.StatusUnauthorized, Commentf(path))
+		c.Assert(resp.Header.Get("WWW-Authenticate"), Matches, "Basic .*")
+	}
+	c.Assert(statusGet(c, "http://127.0.0.1:10090/", "root", "wrong").StatusCode, Equals, http.StatusUnauthorized)
+	c.Assert(statusGet(c, "http://127.0.0.1:10090/", "other", testRootPassword).StatusCode, Equals, http.StatusUnauthorized)
+	c.Assert(statusGet(c, "http://127.0.0.1:10090/", "root", testRootPassword).StatusCode, Equals, http.StatusOK)
+
+	// Off loopback, the status server needs TLS for the password's sake.
+	cfg := config.NewConfig()
+	cfg.Status.StatusHost = "0.0.0.0"
+	srv := &Server{cfg: cfg}
+	c.Assert(srv.startStatusHTTP(), ErrorMatches, ".*needs TLS.*")
 }
 
 // rawLogin opens a connection to the test server and logs in as root with a
