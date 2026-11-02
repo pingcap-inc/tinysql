@@ -479,8 +479,9 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			visited[i] = true
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
 			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
-				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
-				s.joinConds = append(s.joinConds, notNullExpr)
+				if notNullExpr := BuildNotNullExpr(s.ctx, childCol); notNullExpr != nil {
+					s.joinConds = append(s.joinConds, notNullExpr)
+				}
 			}
 		}
 	}

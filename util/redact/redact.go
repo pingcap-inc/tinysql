@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"unicode"
 )
 
 // specialCommentPrefix matches the start of a MySQL-specific (/*!...*/) or
@@ -51,8 +52,11 @@ func SQL(sql string) string {
 }
 
 // Mask replaces every string, number, hexadecimal and bit literal in sql with
-// "?". Identifiers, keywords, quoted identifiers and comments are kept, so the
-// shape of the statement stays readable. It does not need valid SQL.
+// "?", and the text of every comment too, since a comment can hold anything.
+// Identifiers, keywords and quoted identifiers are kept, so the shape of the
+// statement stays readable. Optimizer hints (/*+ ... */) and MySQL- or
+// TiDB-specific comments (/*! ... */, /*T! ... */) keep their text with
+// literals masked, as they are SQL. It does not need valid SQL.
 func Mask(sql string) string {
 	var b strings.Builder
 	b.Grow(len(sql))
@@ -71,12 +75,21 @@ func Mask(sql string) string {
 			}
 			b.WriteString(sql[i:j])
 			i = j
-		case c == '#' || (c == '-' && strings.HasPrefix(sql[i:], "-- ")):
+		case c == '#' || isDashComment(sql[i:]):
 			j := strings.IndexByte(sql[i:], '\n')
 			if j < 0 {
 				j = len(sql) - i
 			}
-			b.WriteString(sql[i : i+j])
+			// Keep the marker ("#", or "--" and the whitespace after it).
+			marker := 1
+			if c == '-' {
+				marker = 3
+			}
+			if j > marker {
+				b.WriteString(sql[i:i+marker] + "?")
+			} else {
+				b.WriteString(sql[i : i+j])
+			}
 			i += j
 		case c == '/' && strings.HasPrefix(sql[i:], "/*"):
 			j := strings.Index(sql[i+2:], "*/")
@@ -89,8 +102,13 @@ func Mask(sql string) string {
 			if prefix := specialCommentPrefix.FindString(body); prefix != "" {
 				// /*! ... */ and /*T! ... */ bodies are executed as SQL.
 				b.WriteString("/*" + prefix + Mask(body[len(prefix):]) + "*/")
+			} else if strings.HasPrefix(body, "+") {
+				// Optimizer hints.
+				b.WriteString("/*+" + Mask(body[1:]) + "*/")
+			} else if body != "" {
+				b.WriteString("/*?*/")
 			} else {
-				b.WriteString(sql[i : i+2+j+2])
+				b.WriteString("/**/")
 			}
 			i += 2 + j + 2
 		case isDigit(c) && (i == 0 || !isIdentChar(sql[i-1])):
@@ -141,6 +159,12 @@ func skipNumber(s string, i int) int {
 		}
 	}
 	return i
+}
+
+// isDashComment reports whether s starts a "--" comment, by the lexer's rule:
+// "--" followed by whitespace or the end of the input.
+func isDashComment(s string) bool {
+	return strings.HasPrefix(s, "--") && (len(s) == 2 || unicode.IsSpace(rune(s[2])))
 }
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }

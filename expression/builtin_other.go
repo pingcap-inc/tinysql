@@ -325,6 +325,8 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinValuesRealSig{bf, c.offset}
 	case types.ETString:
 		sig = &builtinValuesStringSig{bf, c.offset}
+	default:
+		return nil, errUnsupportedEvalType(c.tp.EvalType())
 	}
 	return sig, nil
 }

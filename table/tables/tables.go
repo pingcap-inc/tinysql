@@ -759,7 +759,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return nil
 	}
 
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.BgLogger().Debug("iterate records", zap.String("startKey", kv.KeyForLog(startKey)), zap.String("key", kv.KeyForLog(it.Key())))
 
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range cols {

@@ -525,16 +525,24 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	return columns, names
 }
 
-// NewValuesFunc creates a new values function.
+// NewValuesFunc creates a new values function. Use BuildValuesFunc to get the
+// error for a type VALUES() can't evaluate.
 func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
+	sf, err := BuildValuesFunc(ctx, offset, retTp)
+	terror.Log(err)
+	return sf
+}
+
+// BuildValuesFunc creates a new values function, or returns an error for a
+// column type it can't evaluate (DECIMAL, DATE and the like).
+func BuildValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) (*ScalarFunction, error) {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
-	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
-	}
+	}, err
 }
 
 // FindFieldName finds the column name from NameSlice.

@@ -18,7 +18,9 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 )
@@ -86,4 +88,24 @@ func (ts *ConnTestSuite) TestFieldListBeforeFirstStatement(c *C) {
 	defer se.Close()
 	_, err = se.FieldList("no_such_table")
 	c.Assert(err, NotNil)
+}
+
+// Client-supplied names are quoted and truncated in the log, and an unknown
+// command's payload isn't logged.
+func (ts *ConnTestSuite) TestLastStmtNamesAreQuoted(c *C) {
+	c.Parallel()
+	str := func(packet ...byte) string { return getLastStmtInConn{&clientConn{lastPacket: packet}}.String() }
+	c.Assert(str(append([]byte{mysql.ComInitDB}, "db\nforged line"...)...), Equals, `Use "db\nforged line"`)
+	c.Assert(str(append([]byte{mysql.ComFieldList}, "t\x00"...)...), Equals, `ListFields "t\x00"`)
+	long := str(append([]byte{mysql.ComInitDB}, bytes.Repeat([]byte("x"), 200)...)...)
+	c.Assert(long, Equals, "Use \""+string(bytes.Repeat([]byte("x"), maxLoggedNameLen))+"\"...")
+	c.Assert(str(200, 's', 'e', 'c'), Equals, "cmd=200 len=3")
+}
+
+// "command dispatched failed" leaves a write conflict's key out of the log.
+func (ts *ConnTestSuite) TestDispatchErrForLog(c *C) {
+	c.Parallel()
+	conflict := kv.ErrWriteConflict.FastGenByArgs(1, 2, 0, "{tableID=45, indexID=1, indexValues={SECRET, }}")
+	c.Assert(dispatchErrForLog(conflict), Equals, "[kv:9007]Write conflict (key not logged)")
+	c.Assert(dispatchErrForLog(errors.New("bad value 'SECRET'")), Not(Matches), ".*SECRET.*")
 }

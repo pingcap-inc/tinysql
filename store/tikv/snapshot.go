@@ -226,7 +226,7 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, uint64(0), buf.String()) // TinyKV doesn't report the conflicting commit TS.
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

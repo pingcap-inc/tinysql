@@ -238,20 +238,28 @@ func (p *LogicalJoin) ExtractOnCondition(
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
 						if isNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
-							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
-							leftCond = append(leftCond, notNullExpr)
+							// The not-null filter is only an optimization; skip it
+							// for a type ISNULL doesn't support.
+							if notNullExpr := expression.BuildNotNullExpr(ctx, leftCol); notNullExpr != nil {
+								leftCond = append(leftCond, notNullExpr)
+							}
 						}
 					}
 					if deriveRight {
 						if isNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
-							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
-							rightCond = append(rightCond, notNullExpr)
+							if notNullExpr := expression.BuildNotNullExpr(ctx, rightCol); notNullExpr != nil {
+								rightCond = append(rightCond, notNullExpr)
+							}
 						}
 					}
 					if binop.FuncName.L == ast.EQ {
 						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
-						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-						continue
+						// nil for a type '=' doesn't support; leave expr as an
+						// ordinary condition then.
+						if sf, ok := cond.(*expression.ScalarFunction); ok {
+							eqCond = append(eqCond, sf)
+							continue
+						}
 					}
 				}
 			}
@@ -909,6 +917,13 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			return a.selectFields[index].Expr, true
 		}
 		a.colMapper[v] = index
+	case *ast.ValuesExpr:
+		// Its column was replaced by a select field that isn't a column, and a
+		// later walk of ValuesExpr would dereference the nil Column.
+		if v.Column == nil {
+			a.err = ErrUnknownColumn.GenWithStackByArgs("", "VALUES() function")
+			return node, false
+		}
 	}
 	return n, true
 }

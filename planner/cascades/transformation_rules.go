@@ -166,15 +166,17 @@ func (r *PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	if len(is.IdxCols) == 0 {
 		return nil, false, false, nil
 	}
-	conditions := sel.Conditions
-	if is.AccessConds != nil {
-		// If we have already pushed some conditions down here,
-		// we merge old AccessConds with new conditions,
-		// to make sure this rule can be applied more than once.
-		conditions = make([]expression.Expression, len(sel.Conditions)+len(is.AccessConds))
-		copy(conditions, sel.Conditions)
-		copy(conditions[len(sel.Conditions):], is.AccessConds)
+	// If we have already pushed some conditions down here,
+	// we merge old AccessConds with new conditions,
+	// to make sure this rule can be applied more than once.
+	conditions := make([]expression.Expression, 0, len(sel.Conditions)+len(is.AccessConds))
+	for _, cond := range sel.Conditions {
+		// The ranger needs NOT pushed down: it reads 'not (a = 1)' as 'a = 1'
+		// otherwise, and drops the condition. Build a new slice so the
+		// Selection's own conditions stay as they are.
+		conditions = append(conditions, expression.PushDownNot(is.SCtx(), cond))
 	}
+	conditions = append(conditions, is.AccessConds...)
 	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return nil, false, false, err

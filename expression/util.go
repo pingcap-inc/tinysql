@@ -448,9 +448,13 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 	return intNum, false, nil
 }
 
-// BuildNotNullExpr wraps up `not(isnull())` for given expression.
+// BuildNotNullExpr wraps up `not(isnull())` for given expression. It returns
+// nil if ISNULL can't be built for the expression's type (DECIMAL, DATE, ...).
 func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	if isNull == nil {
+		return nil
+	}
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
 }

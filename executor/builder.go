@@ -622,7 +622,23 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	return e
 }
 
+// checkSortable sets b.err if a sort key has a type the executor can't
+// compare (chunk.GetCompareFunc returns nil for DECIMAL, DATE and the like).
+func (b *executorBuilder) checkSortable(byItems []*plannercore.ByItems) bool {
+	for _, item := range byItems {
+		tp := item.Expr.GetType()
+		if chunk.GetCompareFunc(tp) == nil {
+			b.err = errors.Errorf("sorting a %s value is not supported", types.TypeStr(tp.Tp))
+			return false
+		}
+	}
+	return true
+}
+
 func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
+	if !b.checkSortable(v.ByItems) {
+		return nil
+	}
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -636,6 +652,9 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 }
 
 func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
+	if !b.checkSortable(v.ByItems) {
+		return nil
+	}
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil

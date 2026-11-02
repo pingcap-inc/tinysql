@@ -295,7 +295,8 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
-	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	// ConnectionInfo indicates current connection info used by current session. The server sets it at login,
+	// for the audit log lines.
 	ConnectionInfo *ConnectionInfo
 
 	// use noop funcs or not

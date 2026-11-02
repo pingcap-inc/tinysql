@@ -271,6 +271,11 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			schema = er.insertPlan.tableSchema
 			names = er.insertPlan.tableColNames
 		}
+		if v.Column == nil {
+			// Skip the children: ValuesExpr.Accept dereferences Column.
+			er.err = ErrUnknownColumn.GenWithStackByArgs("", "field list")
+			return inNode, true
+		}
 		idx, err := expression.FindFieldName(names, v.Column.Name)
 		if err != nil {
 			er.err = err
@@ -281,7 +286,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		col := schema.Columns[idx]
-		er.ctxStackAppend(expression.NewValuesFunc(er.sctx, col.Index, col.RetType), types.EmptyName)
+		valuesFunc, err := expression.BuildValuesFunc(er.sctx, col.Index, col.RetType)
+		if err != nil {
+			er.err = err
+			return inNode, true
+		}
+		er.ctxStackAppend(valuesFunc, types.EmptyName)
 		return inNode, true
 	case *ast.FuncCallExpr:
 	default:

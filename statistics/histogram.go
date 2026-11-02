@@ -263,6 +263,10 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 	}
 	if match {
 		cmp := chunk.GetCompareFunc(hg.Tp)
+		if cmp == nil {
+			// The type can't be compared here; estimate as for a non-match.
+			return hg.notNullCount() / float64(hg.NDV)
+		}
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}

@@ -36,6 +36,9 @@ var (
 	ErrTruncated = terror.ClassTypes.New(mysql.WarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 	// ErrOverflow is returned when data is out of range for a field type.
 	ErrOverflow = terror.ClassTypes.New(mysql.ErrDataOutOfRange, mysql.MySQLErrName[mysql.ErrDataOutOfRange])
+	// ErrUnsupportedConversion is returned for a value of a type TinySQL
+	// doesn't implement (DECIMAL, DATE, BIT, ...). It is never just a warning.
+	ErrUnsupportedConversion = terror.ClassTypes.New(mysql.ErrNotSupportedYet, "converting a value to %s is not supported")
 	// ErrDivByZero is return when do division by 0.
 	ErrDivByZero = terror.ClassTypes.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 	// ErrTooBigDisplayWidth is return when display width out of range for column.
@@ -85,6 +88,7 @@ func init() {
 		mysql.WarnDataTruncated:           mysql.WarnDataTruncated,
 		mysql.ErrDataOutOfRange:           mysql.ErrDataOutOfRange,
 		mysql.ErrDivisionByZero:           mysql.ErrDivisionByZero,
+		mysql.ErrNotSupportedYet:          mysql.ErrNotSupportedYet,
 		mysql.ErrTooBigDisplaywidth:       mysql.ErrTooBigDisplaywidth,
 		mysql.ErrTooBigFieldlength:        mysql.ErrTooBigFieldlength,
 		mysql.ErrTooBigSet:                mysql.ErrTooBigSet,

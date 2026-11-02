@@ -16,6 +16,9 @@ package kv
 import (
 	"bytes"
 	"encoding/hex"
+	"strconv"
+
+	"github.com/pingcap/tidb/util/redact"
 )
 
 // Key represents high-level Key type.
@@ -78,6 +81,20 @@ func (k Key) Clone() Key {
 // String implements fmt.Stringer interface.
 func (k Key) String() string {
 	return hex.EncodeToString(k)
+}
+
+// keyPrefixForLog is how much of a key KeyForLog shows: a table key's 't',
+// table ID and "_r" or "_i", without the handle or index values after it.
+const keyPrefixForLog = 11
+
+// KeyForLog returns k for a log line: in full as hex when SQL redaction is
+// off, otherwise only its table prefix and length, since the rest of a key
+// holds row data.
+func KeyForLog(k Key) string {
+	if !redact.Enabled() || len(k) <= keyPrefixForLog {
+		return k.String()
+	}
+	return hex.EncodeToString(k[:keyPrefixForLog]) + "... (" + strconv.Itoa(len(k)) + " bytes)"
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
