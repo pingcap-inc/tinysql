@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -123,4 +124,15 @@ func BenchmarkIsPoint(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		kr.IsPoint()
 	}
+}
+
+// Keys in logs show only their table prefix while SQL redaction is on.
+func (s *testKeySuite) TestKeyForLog(c *C) {
+	defer redact.SetEnabled(true)
+	short := Key("m_short")
+	c.Assert(KeyForLog(short), Equals, short.String())
+	rowKey := Key("t\x80\x00\x00\x00\x00\x00\x00\x2d_i\x01secret-value")
+	c.Assert(KeyForLog(rowKey), Equals, "74800000000000002d5f69... (24 bytes)")
+	redact.SetEnabled(false)
+	c.Assert(KeyForLog(rowKey), Equals, rowKey.String())
 }

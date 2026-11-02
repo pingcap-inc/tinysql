@@ -270,7 +270,7 @@ func (s *session) commitTxn(ctx context.Context) error {
 	if err != nil {
 		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
-			zap.Error(err))
+			zap.String("error", errorForLog(err)))
 		return err
 	}
 	return nil
@@ -322,6 +322,20 @@ func (s *session) String() string {
 	b, err := json.MarshalIndent(data, "", "  ")
 	terror.Log(errors.Trace(err))
 	return string(b)
+}
+
+// errorForLog returns err's message for the log, with literals masked when
+// redaction is on. Errors can carry data: a failed COMMIT names the previous
+// statement, and a write conflict prints the conflicting key's values
+// unquoted, so for that one the key is left out entirely.
+func errorForLog(err error) string {
+	if !redact.Enabled() {
+		return err.Error()
+	}
+	if kv.ErrWriteConflict.Equal(err) {
+		return "[kv:9007]Write conflict (key not logged)"
+	}
+	return redact.SQL(err.Error())
 }
 
 // SchemaChangedWithoutRetry is used for testing.
@@ -566,7 +580,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
-				zap.Error(err),
+				zap.String("error", errorForLog(err)),
 				zap.String("session", s.String()))
 		}
 		return nil, err

@@ -683,7 +683,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				// Parse errors quote the SQL near the error, so mask the text too.
-				zap.String("err", redact.SQL(errStrForLog(err))),
+				zap.String("err", dispatchErrForLog(err)),
 			)
 			err1 := cc.writeError(err)
 			terror.Log(err1)
@@ -716,6 +716,16 @@ func queryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
+}
+
+// dispatchErrForLog masks err for the log. A write conflict prints the
+// conflicting key's values unquoted, which redact.SQL would miss, so its key
+// is left out, as in the session's log lines.
+func dispatchErrForLog(err error) string {
+	if redact.Enabled() && kv.ErrWriteConflict.Equal(err) {
+		return "[kv:9007]Write conflict (key not logged)"
+	}
+	return redact.SQL(errStrForLog(err))
 }
 
 func errStrForLog(err error) string {
@@ -1177,9 +1187,9 @@ func (cc getLastStmtInConn) String() string {
 	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
 	switch cmd {
 	case mysql.ComInitDB:
-		return "Use " + string(data)
+		return "Use " + nameForLog(data)
 	case mysql.ComFieldList:
-		return "ListFields " + string(data)
+		return "ListFields " + nameForLog(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		return queryStrForLog(string(hack.String(data)))
 	case mysql.ComStmtClose, mysql.ComStmtReset:
@@ -1192,6 +1202,19 @@ func (cc getLastStmtInConn) String() string {
 		if cmdStr, ok := mysql.Command2Str[cmd]; ok {
 			return cmdStr
 		}
-		return string(hack.String(data))
+		// An unknown command's payload is whatever the client sent.
+		return fmt.Sprintf("cmd=%d len=%d", cmd, len(data))
 	}
+}
+
+// maxLoggedNameLen bounds a client-supplied name written to the log.
+const maxLoggedNameLen = 64
+
+// nameForLog quotes a client-supplied name for the log, so control bytes and
+// newlines can't forge log lines, and truncates it.
+func nameForLog(data []byte) string {
+	if len(data) > maxLoggedNameLen {
+		return strconv.Quote(string(data[:maxLoggedNameLen])) + "..."
+	}
+	return strconv.Quote(string(data))
 }

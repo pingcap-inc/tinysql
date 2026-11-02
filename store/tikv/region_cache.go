@@ -380,7 +380,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		if err != nil {
 			// ignore error and use old region info.
 			logutil.Logger(bo.ctx).Error("load region failure",
-				zap.ByteString("key", key), zap.Error(err))
+				zap.String("key", kv.KeyForLog(key)), zap.Error(err))
 		} else {
 			r = lr
 			c.mu.Lock()
