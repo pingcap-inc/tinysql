@@ -220,7 +220,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "ssl_cert", ""},
 	{ScopeNone, "ssl_key", ""},
 	{ScopeNone, "ssl_cipher", ""},
-	{ScopeNone, "tls_version", "TLSv1,TLSv1.1,TLSv1.2"},
+	{ScopeNone, "tls_version", "TLSv1.2,TLSv1.3"},
+	{ScopeNone, RequireSecureTransport, "OFF"},
 	{ScopeNone, "system_time_zone", "CST"},
 	{ScopeGlobal, InnodbPrintAllDeadlocks, "0"},
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
@@ -555,7 +556,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_old_blocks_time", "1000"},
 	{ScopeGlobal, "innodb_stats_method", "nulls_equal"},
 	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, strconv.FormatInt(DefInnodbLockWaitTimeout, 10)},
-	{ScopeGlobal, LocalInFile, "1"},
+	{ScopeNone, LocalInFile, "0"},
 	{ScopeGlobal | ScopeSession, "myisam_stats_method", "nulls_unequal"},
 	{ScopeNone, "version_compile_os", "osx10.8"},
 	{ScopeNone, "relay_log_recovery", "0"},
@@ -856,6 +857,8 @@ const (
 	ShowOldTemporals = "show_old_temporals"
 	// LocalInFile is the name for 'local_infile' system variable.
 	LocalInFile = "local_infile"
+	// RequireSecureTransport is the name for 'require_secure_transport' system variable.
+	RequireSecureTransport = "require_secure_transport"
 	// PerformanceSchema is the name for 'performance_schema' system variable.
 	PerformanceSchema = "performance_schema"
 	// Flush is the name for 'flush' system variable.

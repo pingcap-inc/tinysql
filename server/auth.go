@@ -129,6 +129,17 @@ func checkPrivateFile(file string, fi os.FileInfo) error {
 	return nil
 }
 
+// CheckPrivateDataDir checks that the data directory is owned by this user and
+// not writable by anyone else, as the password and TLS key files inside it
+// require.
+func CheckPrivateDataDir(dir string) error {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return checkPrivateDir(dir)
+}
+
 func checkPrivateDir(dir string) error {
 	fi, err := os.Lstat(dir)
 	if err != nil {
@@ -138,7 +149,7 @@ func checkPrivateDir(dir string) error {
 		return errors.Errorf("%s is not a directory", dir)
 	}
 	if !isPrivate(fi, 0022) {
-		return errors.Errorf("%s must be owned by the current user and not writable by group or others", dir)
+		return errors.Errorf("%s must be owned by the current user and not writable by group or others (chmod 700)", dir)
 	}
 	return nil
 }

@@ -39,7 +39,8 @@ After you started tidb-server, you can use official `mysql` client to connect to
 Log in as `root` with the root password: the value of `TINYSQL_ROOT_PASSWORD` if
 you set it, otherwise the password the server generated in the `root-password`
 file of its data directory (default `tinysql-data/root-password`, relative to the
-directory you started the server from).
+directory you started the server from). On Windows the server doesn't generate a
+password file, so set `TINYSQL_ROOT_PASSWORD` there.
 
 ```
 mysql -h 127.0.0.1 -P 4000 -u root -p -D test --prompt="tidb> "

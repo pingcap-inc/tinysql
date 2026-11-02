@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -90,7 +91,7 @@ var (
 	reportStatus = flagBoolean(nmReportStatus, false, "If enable status report HTTP service.")
 	statusHost   = flag.String(nmStatusHost, "127.0.0.1", "tidb server status host (use 0.0.0.0 to listen on all interfaces)")
 	statusPort   = flag.String(nmStatusPort, "10080", "tidb server status port")
-	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes heap dumps; local debugging only)")
+	enablePProf  = flagBoolean(nmEnablePProf, false, "serve Go pprof on the status server (exposes goroutine stacks and process arguments; local debugging only)")
 )
 
 var (
@@ -115,6 +116,7 @@ func main() {
 		log.Warn(configWarning)
 	}
 	setupRootPassword()
+	setupTLS()
 	createStoreAndDomain()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
@@ -301,6 +303,10 @@ func setupLog() {
 	terror.MustNil(err)
 }
 
+// minRecommendedPasswordLen is the length below which a chosen root password
+// gets a warning. It isn't enforced: learners often pick short local ones.
+const minRecommendedPasswordLen = 12
+
 // setupRootPassword sets the root account's password hash from
 // TINYSQL_ROOT_PASSWORD or, for an on-disk mocktikv store, from a password file
 // generated in the data directory on first start.
@@ -311,8 +317,20 @@ func setupRootPassword() {
 		log.Fatal(envRootPassword + " is set but empty")
 	case ok:
 		log.Info("root password taken from " + envRootPassword)
+		if len(password) < minRecommendedPasswordLen {
+			log.Warn(envRootPassword + " is shorter than " + strconv.Itoa(minRecommendedPasswordLen) +
+				" characters; failed logins are slowed down, but a short password can still be guessed")
+		}
+		// The store's data files are as sensitive as the password file.
+		if cfg.Store == "mocktikv" && cfg.Path != "" && runtime.GOOS != "windows" {
+			if err := server.CheckPrivateDataDir(cfg.Path); err != nil {
+				log.Fatal("the data directory is not private", zap.Error(err))
+			}
+		}
 	case cfg.Store != "mocktikv" || cfg.Path == "":
 		log.Fatal("set " + envRootPassword + " to choose the root password (required unless the store is an on-disk mocktikv)")
+	case runtime.GOOS == "windows":
+		log.Fatal("set " + envRootPassword + " to choose the root password: a generated password file can't be kept private on Windows")
 	default:
 		var file string
 		var err error
@@ -324,6 +342,46 @@ func setupRootPassword() {
 			zap.String("file", file))
 	}
 	cfg.Security.RootPasswordHash = server.NativePasswordHash(password)
+}
+
+// setupTLS generates a self-signed certificate for MySQL clients when none is
+// configured and the store is an on-disk mocktikv, then publishes the TLS
+// settings as system variables.
+func setupTLS() {
+	sec := &cfg.Security
+	switch {
+	case sec.SSLCert != "" || sec.SSLKey != "":
+	case !sec.AutoTLS:
+	case cfg.Store != "mocktikv" || cfg.Path == "":
+		log.Info("TLS for MySQL clients is off: auto-tls needs an on-disk mocktikv store; set ssl-cert and ssl-key")
+	case runtime.GOOS == "windows":
+		// The private-key file can't be checked for other readers there.
+		log.Info("TLS for MySQL clients is off: auto-tls is not supported on Windows; set ssl-cert and ssl-key")
+	default:
+		certFile, keyFile, fingerprint, err := server.LoadOrCreateTLSCert(cfg.Path)
+		if err != nil {
+			log.Fatal("cannot set up the auto-generated TLS certificate (fix the permissions, or set auto-tls = false in the [security] section of the config file)", zap.Error(err))
+		}
+		sec.SSLCert, sec.SSLKey = certFile, keyFile
+		log.Info("TLS for MySQL clients uses a self-signed certificate",
+			zap.String("cert", certFile), zap.String("sha256", fingerprint))
+	}
+
+	tlsOn := sec.SSLCert != "" && sec.SSLKey != ""
+	haveSSL := "DISABLED"
+	if tlsOn {
+		haveSSL = "YES"
+	}
+	requireTLS := "OFF"
+	if sec.RequireSecureTransport || sec.RequireClientCert {
+		requireTLS = "ON"
+	}
+	variable.SysVars["have_ssl"].Value = haveSSL
+	variable.SysVars["have_openssl"].Value = haveSSL
+	variable.SysVars["ssl_ca"].Value = sec.SSLCA
+	variable.SysVars["ssl_cert"].Value = sec.SSLCert
+	variable.SysVars["ssl_key"].Value = sec.SSLKey
+	variable.SysVars[variable.RequireSecureTransport].Value = requireTLS
 }
 
 func createServer() {

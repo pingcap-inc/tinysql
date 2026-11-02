@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -606,7 +607,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexLookupJoinConcurrency:
 		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexLookupSize:
-		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
+		// Capped here too, for a global value stored before the cap existed.
+		s.IndexLookupSize = mathutil.Min(tidbOptPositiveInt32(val, DefIndexLookupSize), maxIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
 	case TiDBProjectionConcurrency:
@@ -620,9 +622,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
-		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+		s.KVVars.BackoffLockFast = mathutil.Min(tidbOptPositiveInt32(val, kv.DefBackoffLockFast), maxBackoffLockFast)
 	case TiDBBackOffWeight:
-		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
+		s.KVVars.BackOffWeight = mathutil.Min(tidbOptPositiveInt32(val, kv.DefBackOffWeight), maxBackOffWeight)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBCurrentTS:

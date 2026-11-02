@@ -15,6 +15,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/subtle"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -56,15 +58,57 @@ func limitPProfSeconds(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// statusAuth requires HTTP Basic auth as root, with the root password, on
+// every status route. Failures count toward the client address's run of
+// failed logins, as on the SQL port, and a remote address may have only a few
+// attempts in flight at once.
+func (s *Server) statusAuth(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		user, password, ok := r.BasicAuth()
+		if ok && user == rootUser && subtle.ConstantTimeCompare(NativePasswordHash(password), s.cfg.Security.RootPasswordHash) == 1 {
+			s.hosts.loginSucceeded(host)
+			h.ServeHTTP(w, r)
+			return
+		}
+		if !s.hosts.beginHandshake(host) {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		defer s.hosts.endHandshake(host)
+		if ok {
+			delay := s.hosts.loginFailed(host)
+			logutil.BgLogger().Warn("status server authentication failed",
+				zap.String("user", user), zap.String("host", host), zap.Duration("delay", delay))
+			time.Sleep(delay)
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="tinysql", charset="UTF-8"`)
+		http.Error(w, "log in as root with the root password", http.StatusUnauthorized)
+	})
+}
+
+func isLoopbackHost(host string) bool {
+	return host == "localhost" || isLoopback(host)
+}
+
 // startStatusHTTP binds the status listener and serves it in the background.
 // A bind error is returned to the caller instead of being logged and ignored.
+// The status server uses the SQL port's TLS when there is one, since Basic
+// auth sends the root password; without TLS it only listens on loopback.
 func (s *Server) startStatusHTTP() error {
+	if s.tlsConfig == nil && !isLoopbackHost(s.cfg.Status.StatusHost) {
+		return errors.Errorf("status-host %s is not a loopback address, so the status server needs TLS to protect the root password: set ssl-cert and ssl-key, or keep auto-tls on", s.cfg.Status.StatusHost)
+	}
 	addr := net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return errors.Annotatef(err, "status server cannot listen on %s", addr)
 	}
-	logutil.BgLogger().Info("status server is running", zap.String("addr", addr), zap.Bool("pprof", s.cfg.Status.EnablePProf))
+	logutil.BgLogger().Info("status server is running", zap.String("addr", addr), zap.Bool("pprof", s.cfg.Status.EnablePProf),
+		zap.Bool("tls", s.tlsConfig != nil))
 	go s.startHTTPServer(l)
 	return nil
 }
@@ -78,9 +122,9 @@ func (s *Server) startHTTPServer(l net.Listener) {
 	if s.cfg.Status.EnablePProf {
 		// Index also serves the named profiles (heap, goroutine, ...), which accept seconds too.
 		serverMux.HandleFunc("/debug/pprof/", limitPProfSeconds(pprof.Index))
-		serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		serverMux.HandleFunc("/debug/pprof/cmdline", limitPProfSeconds(pprof.Cmdline))
 		serverMux.HandleFunc("/debug/pprof/profile", limitPProfSeconds(pprof.Profile))
-		serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		serverMux.HandleFunc("/debug/pprof/symbol", limitPProfSeconds(pprof.Symbol))
 		serverMux.HandleFunc("/debug/pprof/trace", limitPProfSeconds(pprof.Trace))
 	}
 
@@ -120,22 +164,28 @@ func (s *Server) startHTTPServer(l net.Listener) {
 }
 
 func (s *Server) setupStatusServer(l net.Listener, serverMux *http.ServeMux) {
-	m := cmux.New(l)
-	m.SetReadTimeout(statusReadHeaderTimeout)
-	// Match connections in order:
-	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
-
 	s.statusServer = &http.Server{
 		Addr:              l.Addr().String(),
-		Handler:           CorsHandler{handler: serverMux, cfg: s.cfg},
+		Handler:           CorsHandler{handler: s.statusAuth(serverMux), cfg: s.cfg},
 		ReadHeaderTimeout: statusReadHeaderTimeout,
 		ReadTimeout:       statusReadTimeout,
 		WriteTimeout:      statusWriteTimeout,
 		IdleTimeout:       statusIdleTimeout,
 		MaxHeaderBytes:    1 << 16,
 	}
+	if s.tlsConfig != nil {
+		go util.WithRecovery(func() {
+			err := s.statusServer.Serve(tls.NewListener(l, s.tlsConfig))
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+		return
+	}
 
+	m := cmux.New(l)
+	m.SetReadTimeout(statusReadHeaderTimeout)
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
 	go util.WithRecovery(func() {
 		err := s.statusServer.Serve(httpL)
 		logutil.BgLogger().Error("http server error", zap.Error(err))
