@@ -909,6 +909,13 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			return a.selectFields[index].Expr, true
 		}
 		a.colMapper[v] = index
+	case *ast.ValuesExpr:
+		// Its column was replaced by a select field that isn't a column, and a
+		// later walk of ValuesExpr would dereference the nil Column.
+		if v.Column == nil {
+			a.err = ErrUnknownColumn.GenWithStackByArgs("", "VALUES() function")
+			return node, false
+		}
 	}
 	return n, true
 }

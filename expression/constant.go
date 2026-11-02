@@ -92,12 +92,23 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 	return c.Value, nil
 }
 
+// needsConversion reports whether the value isn't stored as a number. A hex
+// or bit literal such as 0x41 is a binary literal, and reading it as a number
+// without converting it gives 0.
+func (c *Constant) needsConversion() bool {
+	switch c.Value.Kind() {
+	case types.KindString, types.KindBinaryLiteral, types.KindMysqlBit:
+		return true
+	}
+	return false
+}
+
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindString {
+	if c.GetType().Hybrid() || c.needsConversion() {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
 	}
@@ -109,7 +120,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindString {
+	if c.GetType().Hybrid() || c.needsConversion() {
 		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
 	}

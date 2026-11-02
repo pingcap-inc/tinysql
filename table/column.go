@@ -142,6 +142,11 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
+	if types.ErrUnsupportedConversion.Equal(err) {
+		// Non-strict sql_mode must not turn this into a warning and a stored
+		// zero value.
+		return casted, err
+	}
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if types.ErrTruncated.Equal(err) {
 		str, err1 := val.ToString()

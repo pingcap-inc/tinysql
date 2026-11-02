@@ -415,6 +415,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if isIncorrectName(cName) {
 		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
+	// _tidb_rowid is the hidden handle column; a user column of that name
+	// collides with it in every SELECT.
+	if strings.EqualFold(cName, model.ExtraHandleName.O) {
+		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
+	}
 
 	// Check column type.
 	tp := colDef.Tp

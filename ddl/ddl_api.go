@@ -749,6 +749,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			sc.AppendWarning(ErrTableCantHandleFt)
 			continue
 		}
+		if constr.Tp == ast.ConstraintCheck {
+			// CHECK is parsed and ignored, as in MySQL 5.7 and ALTER TABLE ADD
+			// CONSTRAINT here; it used to become an index with no columns.
+			continue
+		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
