@@ -8,7 +8,7 @@ require (
 	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537
 	github.com/cznic/y v0.0.0-20181122101901-b05e8c2e8d7b
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.3.1
+	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.3.4
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
@@ -21,16 +21,16 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60
-	github.com/sirupsen/logrus v1.2.0
+	github.com/sirupsen/logrus v1.8.3
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v1.1.0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.14.0
-	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
-	golang.org/x/text v0.3.2
-	golang.org/x/tools v0.0.0-20200304193943-95d2e580d8eb
+	golang.org/x/net v0.17.0
+	golang.org/x/text v0.13.0
+	golang.org/x/tools v0.6.0
 	google.golang.org/grpc v1.25.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
@@ -38,3 +38,5 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+
+replace golang.org/x/sys => golang.org/x/sys v0.0.0-20220728004956-3c1f35247d10
