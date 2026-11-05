@@ -68,14 +68,18 @@ func (s *Server) statusAuth(h http.Handler) http.Handler {
 		if err != nil {
 			host = r.RemoteAddr
 		}
+		// Take an attempt slot before looking at the credentials, as the SQL
+		// port does at accept. Otherwise a host whose slots are all held by
+		// delayed failures could still have its guesses checked, unthrottled.
+		if !s.hosts.beginHandshake(host) {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 		user, password, ok := r.BasicAuth()
 		if ok && user == rootUser && subtle.ConstantTimeCompare(NativePasswordHash(password), s.cfg.Security.RootPasswordHash) == 1 {
 			s.hosts.loginSucceeded(host)
+			s.hosts.endHandshake(host)
 			h.ServeHTTP(w, r)
-			return
-		}
-		if !s.hosts.beginHandshake(host) {
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
 		defer s.hosts.endHandshake(host)
