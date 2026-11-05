@@ -203,6 +203,7 @@ func (s *testHostTrackerSuite) TestStatusAuthGatesBeforeTheCompare(c *C) {
 	c.Assert(get("root", testRootPassword), Equals, http.StatusTooManyRequests)
 	c.Assert(get("root", "wrong"), Equals, http.StatusTooManyRequests)
 	c.Assert(served, Equals, 0)
+	c.Assert(srv.hosts.hosts["192.0.2.7"].failures, Equals, 0)
 
 	// With a slot free the right password gets in and gives the slot back.
 	srv.hosts.endHandshake("192.0.2.7")
