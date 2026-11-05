@@ -17,6 +17,8 @@ import (
 	"container/list"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -172,4 +174,45 @@ func (s *testHostTrackerSuite) TestEvictionEndsTheDelay(c *C) {
 	default:
 		c.Fatal("the evicted connection's delay would not end")
 	}
+}
+
+// The status server takes an attempt slot before it checks a password, so a
+// host whose slots are all taken learns nothing about a guess, not even a
+// right one, and a success gives its slot back before the route runs.
+func (s *testHostTrackerSuite) TestStatusAuthGatesBeforeTheCompare(c *C) {
+	cfg := &config.Config{}
+	cfg.Security.RootPasswordHash = NativePasswordHash(testRootPassword)
+	srv := &Server{cfg: cfg, hosts: newHostTracker()}
+	served := 0
+	handler := srv.statusAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served++
+		c.Assert(srv.hosts.hosts["192.0.2.7"].handshakes, Equals, maxHandshakesPerHost-1)
+	}))
+	get := func(user, password string) int {
+		req := httptest.NewRequest("GET", "/status", nil)
+		req.RemoteAddr = "192.0.2.7:4000"
+		req.SetBasicAuth(user, password)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < maxHandshakesPerHost; i++ {
+		c.Assert(srv.hosts.beginHandshake("192.0.2.7"), IsTrue)
+	}
+	c.Assert(get("root", testRootPassword), Equals, http.StatusTooManyRequests)
+	c.Assert(get("root", "wrong"), Equals, http.StatusTooManyRequests)
+	c.Assert(served, Equals, 0)
+	c.Assert(srv.hosts.hosts["192.0.2.7"].failures, Equals, 0)
+
+	// With a slot free the right password gets in and gives the slot back.
+	srv.hosts.endHandshake("192.0.2.7")
+	c.Assert(get("root", testRootPassword), Equals, http.StatusOK)
+	c.Assert(served, Equals, 1)
+	c.Assert(srv.hosts.hosts["192.0.2.7"].handshakes, Equals, maxHandshakesPerHost-1)
+
+	// A wrong one is refused and counted.
+	c.Assert(get("root", "wrong"), Equals, http.StatusUnauthorized)
+	c.Assert(srv.hosts.hosts["192.0.2.7"].failures, Equals, 1)
+	c.Assert(srv.hosts.hosts["192.0.2.7"].handshakes, Equals, maxHandshakesPerHost-1)
 }
